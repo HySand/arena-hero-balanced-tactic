@@ -1,0 +1,360 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="dark light">
+  <title>Arena Hero · 战术控制台</title>
+  <link rel="stylesheet" href="/styles.css">
+</head>
+<body>
+  <div class="ambient ambient-one"></div>
+  <div class="ambient ambient-two"></div>
+  <div class="app-shell">
+    <header class="topbar">
+      <div class="brand">
+        <div class="brand-mark">A</div>
+        <div>
+          <p class="eyebrow">ARENA HERO / LOCAL CONTROL</p>
+          <h1>平衡战术控制台</h1>
+        </div>
+      </div>
+      <div class="top-actions">
+        <div class="theme-controls" aria-label="页面外观">
+          <label class="theme-control"><span>主题</span><select id="themePreset"><option value="dark">深色</option><option value="light">浅色</option><option value="midnight">夜蓝</option><option value="custom">自定义</option></select></label>
+          <label class="theme-control"><span>背景</span><input id="backgroundColor" type="color" value="#080b12" title="整个页面的底色"></label>
+          <label class="theme-control"><span>面板</span><input id="panelColor" type="color" value="#111622" title="生产计划和策略设置等大面板颜色"></label>
+          <label class="theme-control"><span>卡片</span><input id="cardColor" type="color" value="#1c2638" title="状态卡、单位卡和列表项颜色"></label>
+          <label class="theme-control"><span>主色</span><input id="accentColor" type="color" value="#55dfc3" title="按钮、边框和高亮颜色"></label>
+        </div>
+        <div class="connection-pill" id="connectionPill">
+          <span class="connection-dot"></span>
+          <span id="connectionText">等待战术状态</span>
+        </div>
+        <button class="button ghost" id="refreshButton" type="button">刷新</button>
+        <button class="button primary" id="saveButton" type="button">保存并热加载</button>
+      </div>
+    </header>
+
+    <main>
+      <section class="metric-grid" aria-label="当前战术状态">
+        <article class="metric-card posture-card">
+          <span class="metric-label">当前姿态</span>
+          <strong class="metric-value posture" id="metricPosture">—</strong>
+          <span class="metric-note" id="metricThreat">威胁分 —</span>
+        </article>
+        <article class="metric-card">
+          <span class="metric-label">Tick</span>
+          <strong class="metric-value" id="metricTick">—</strong>
+          <span class="metric-note" id="metricAccepted">等待提交</span>
+        </article>
+        <article class="metric-card">
+          <span class="metric-label">资源 / 容量</span>
+          <strong class="metric-value"><span id="metricResources">—</span><small> / </small><span id="metricCapacity">—</span></strong>
+          <span class="metric-note" id="metricUpkeep">下 Tick 维护费 —</span>
+        </article>
+        <article class="metric-card">
+          <span class="metric-label">人口</span>
+          <strong class="metric-value" id="metricPopulation">—</strong>
+          <span class="metric-note" id="metricCounts">W — · V — · R —</span>
+        </article>
+        <article class="metric-card">
+          <span class="metric-label">Core</span>
+          <strong class="metric-value" id="metricCoreShield">—</strong>
+          <span class="metric-note" id="metricCorePosition">位置 —</span>
+        </article>
+        <article class="metric-card pacing-card">
+          <span class="metric-label">扩张阶段</span>
+          <strong class="metric-value" id="metricPhase">—</strong>
+          <span class="metric-note" id="metricPhaseNote">探索 — · 进攻 —</span>
+        </article>
+      </section>
+
+      <div class="dashboard-grid">
+        <section class="config-column" aria-label="策略配置">
+          <article class="panel production-panel">
+            <div class="panel-heading">
+              <div>
+                <p class="eyebrow">BUILD DOCTRINE</p>
+                <h2>生产计划</h2>
+                <p class="panel-description">从上到下补齐最低数量。前期建议先放工人，后面再放先锋和游侠；遇到危险时系统会自动优先补防守。</p>
+              </div>
+              <label class="switch-row compact">
+                <span>启用计划</span>
+                <input id="productionEnabled" type="checkbox">
+                <span class="switch" aria-hidden="true"></span>
+              </label>
+            </div>
+
+            <div class="production-summary">
+              <div>
+                <span>当前缺口预算</span>
+                <strong id="productionCost">0</strong>
+              </div>
+              <div>
+                <span>目标人口</span>
+                <strong id="productionPopulation">0</strong>
+              </div>
+              <div>
+                <span>执行状态</span>
+                <strong id="productionStatus">等待状态</strong>
+              </div>
+            </div>
+
+            <div class="production-list" id="productionList" aria-live="polite"></div>
+
+            <div class="field-grid three">
+              <label class="field">
+                <span>生产保留资源</span>
+                <input id="reserveResources" type="number" min="0" max="10000" step="1">
+                <small>未达到保留值时等待，不跳过当前阶段。</small>
+              </label>
+              <label class="field">
+                <span>最大人口</span>
+                <input id="maxPopulation" type="number" min="1" max="100" step="1">
+                <small>20 人起会产生维护费。</small>
+              </label>
+              <label class="field">
+                <span>计划完成后</span>
+                <select id="afterPlan">
+                  <option value="adaptive">继续平衡扩张</option>
+                  <option value="hold">停止常规生产</option>
+                </select>
+                <small>紧急恢复与安全生产不受影响。</small>
+              </label>
+            </div>
+          </article>
+
+          <div class="strategy-grid">
+            <article class="panel strategy-card threat-accent">
+              <div class="panel-heading small">
+                <div><p class="eyebrow">THREAT RESPONSE</p><h2>遇到危险时怎么反应</h2></div>
+                <span class="section-icon">盾</span>
+              </div>
+              <div class="field-grid two">
+                <label class="field"><span>警戒分数（开始收缩）</span><input data-path="threat.guarded_score" type="number" min="0" max="100" step="0.1"><small>达到后少派工人远行，让战斗单位靠近 Core。</small></label>
+                <label class="field"><span>回防分数（全队撤回）</span><input data-path="threat.survival_score" type="number" min="0" max="100" step="0.1"><small>达到后停止普通探索，优先保护 Core 和工人。</small></label>
+              </div>
+              <p class="card-hint">分数是系统根据附近敌人、Core 受击和工人危险自动算出的风险等级，不是资源数量。默认 2 / 4 可以理解为“有点危险先收缩，危险很大就全队回防”。</p>
+            </article>
+
+            <article class="panel strategy-card worker-accent">
+              <div class="panel-heading small">
+                <div><p class="eyebrow">WORKER NETWORK</p><h2>工人采集设置</h2></div>
+                <span class="section-icon">W</span>
+              </div>
+              <div class="field-grid three compact-grid">
+                <label class="field"><span>低危时外出工人上限</span><input data-path="workers.max_economy_scouts" type="number" min="0" max="100"><small>风险较低时，最多几个工人可以离开 Core 找新矿。</small></label>
+                <label class="field"><span>有风险时外出人数</span><input data-path="workers.max_scouts_under_threat" type="number" min="0" max="100"><small>发现风险后建议设为 0 或 1。</small></label>
+                <label class="field"><span>低危探索半径（格子数）</span><input data-path="workers.safe_scout_radius" type="number" min="0" max="500"><small>低危时工人离 Core 的最大寻矿距离，1 格就是地图上的 1 步。</small></label>
+              </div>
+              <p class="card-hint">“外出探索人数”只影响找新区域，不会阻止已经看到的矿点采集。带货工人一定会优先回 Core 交付。</p>
+            </article>
+
+            <article class="panel strategy-card worker-accent wide-card">
+              <div class="panel-heading small">
+                <div><p class="eyebrow">ADAPTIVE ECONOMY</p><h2>自动效率优化</h2></div>
+                <label class="switch-row compact">
+                  <span id="adaptiveStatus">正在收集样本</span>
+                  <input data-path="adaptive_economy.enabled" type="checkbox">
+                  <span class="switch" aria-hidden="true"></span>
+                </label>
+              </div>
+              <p class="card-hint" id="adaptiveMetrics">等待战术运行后显示吞吐、忙碌率和采集周期。</p>
+              <div class="field-grid six compact-grid">
+                <label class="field"><span>统计窗口（Tick）</span><input data-path="adaptive_economy.window_ticks" type="number" min="4" max="64"><small>默认 12，兼顾响应速度与稳定性。</small></label>
+                <label class="field"><span>预热样本（Tick）</span><input data-path="adaptive_economy.warmup_ticks" type="number" min="0" max="1000"><small>样本不足时不调整。</small></label>
+                <label class="field"><span>两次调整间隔</span><input data-path="adaptive_economy.adjustment_cooldown_ticks" type="number" min="1" max="1000"><small>默认 6，避免来回抖动。</small></label>
+                <label class="field"><span>半径单次步长</span><input data-path="adaptive_economy.radius_step" type="number" min="1" max="20"><small>每次只扩大或收缩几格。</small></label>
+                <label class="field"><span>最小采矿半径</span><input data-path="adaptive_economy.min_resource_radius" type="number" min="1" max="500"></label>
+                <label class="field"><span>最大采矿半径</span><input data-path="adaptive_economy.max_resource_radius" type="number" min="1" max="500"></label>
+              </div>
+              <div class="field-grid six compact-grid">
+                <label class="field"><span>连续缺矿判定</span><input data-path="adaptive_economy.scarcity_ticks" type="number" min="1" max="64"><small>连续几个 Tick 无候选矿才扩圈。</small></label>
+                <label class="field"><span>过长往返周期</span><input data-path="adaptive_economy.long_cycle_ticks" type="number" min="1" max="1000"><small>超过后优先缩短路线。</small></label>
+                <label class="field"><span>低吞吐阈值</span><input data-path="adaptive_economy.low_throughput_per_worker" type="number" min="0" max="100" step="0.001"></label>
+                <label class="field"><span>健康吞吐阈值</span><input data-path="adaptive_economy.healthy_throughput_per_worker" type="number" min="0" max="100" step="0.001"></label>
+                <label class="field"><span>采集失败率上限</span><input data-path="adaptive_economy.max_harvest_failure_rate" type="number" min="0" max="1" step="0.01"></label>
+                <label class="field"><span>仓库满占比</span><input data-path="adaptive_economy.storage_full_ratio" type="number" min="0" max="1" step="0.01"></label>
+              </div>
+              <div class="field-grid three compact-grid">
+                <label class="field"><span>额外侦察工人上限</span><input data-path="adaptive_economy.max_scout_bonus" type="number" min="0" max="20"></label>
+                <label class="field"><span>动态工人目标下限</span><input data-path="adaptive_economy.worker_target_min" type="number" min="0" max="100"></label>
+                <label class="field"><span>动态工人目标上限</span><input data-path="adaptive_economy.worker_target_max" type="number" min="0" max="100"></label>
+              </div>
+              <p class="card-hint">自动优化只改变当前运行时的有效值，不会反复改写配置文件；关闭后立即恢复你设定的固定半径和生产目标。</p>
+            </article>
+
+            <article class="panel strategy-card pacing-accent wide-card">
+              <div class="panel-heading small">
+                <div><p class="eyebrow">SIMPLE GAME PLAN</p><h2>我现在应该做什么</h2></div>
+                <label class="switch-row compact">
+                  <span>按阶段自动执行</span>
+                  <input data-path="pacing.enabled" type="checkbox">
+                  <span class="switch" aria-hidden="true"></span>
+                </label>
+              </div>
+              <div class="phase-guide">
+                <div><strong>前期 · 先采近矿</strong><span>围绕 Core 采集，少量探索</span></div>
+                <div><strong>中期 · 扩大找矿</strong><span>人口起来后扩大范围</span></div>
+                <div><strong>后期 · 准备进攻</strong><span>资源够、兵力够才出击</span></div>
+              </div>
+              <div class="preset-row">
+                <label class="field"><span>快速选择策略 <em class="recommended-badge">推荐：平衡扩张</em></span><select id="pacingPreset"><option value="custom">手动设置</option><option value="safe">保守采集</option><option value="balanced">平衡扩张</option><option value="aggressive">积极进攻</option></select></label>
+                <p class="preset-help" id="pacingPresetHelp">推荐先用“平衡扩张”，需要时再改下面的数字。</p>
+              </div>
+              <div class="field-grid six compact-grid">
+                <label class="field"><span>前期最长回合</span><input data-path="pacing.early_ticks" type="number" min="0" max="100000"><small>不是秒，是游戏回合数。</small></label>
+                <label class="field"><span>中期最长回合</span><input data-path="pacing.mid_ticks" type="number" min="0" max="100000"></label>
+                <label class="field"><span>前期人口目标</span><input data-path="pacing.early_population" type="number" min="0" max="100"><small>达到后可以逐步扩圈。</small></label>
+                <label class="field"><span>中期人口目标</span><input data-path="pacing.mid_population" type="number" min="0" max="100"></label>
+                <label class="field"><span>前期最多外出工人</span><input data-path="pacing.early_worker_scouts" type="number" min="0" max="100"></label>
+                <label class="field"><span>中期最多外出工人</span><input data-path="pacing.mid_worker_scouts" type="number" min="0" max="100"></label>
+                <label class="field"><span>后期最多外出工人</span><input data-path="pacing.late_worker_scouts" type="number" min="0" max="100"></label>
+              </div>
+              <div class="field-grid three compact-grid pacing-subgrid">
+                <label class="field"><span>前期采矿上限（路径格）</span><input data-path="pacing.early_resource_radius" type="number" min="0" max="500"><small>按绕开障碍后的实际返航路径计算，不是坐标直线距离。</small></label>
+                <label class="field"><span>中期采矿上限（路径格）</span><input data-path="pacing.mid_resource_radius" type="number" min="0" max="500"></label>
+                <label class="field"><span>后期采矿上限（路径格）</span><input data-path="pacing.late_resource_radius" type="number" min="0" max="500"></label>
+                <label class="field"><span>前期探索范围（格子数）</span><input data-path="pacing.early_exploration_radius" type="number" min="0" max="500"><small>建议不超过 12，先把近处资源摸清。</small></label>
+                <label class="field"><span>中期找矿距离（格子数）</span><input data-path="pacing.mid_exploration_radius" type="number" min="0" max="500"></label>
+                <label class="field"><span>后期找矿距离（格子数）</span><input data-path="pacing.late_exploration_radius" type="number" min="0" max="500"></label>
+              </div>
+              <div class="field-grid six compact-grid pacing-subgrid">
+                <label class="field switch-field"><span>允许自动进攻</span><input data-path="pacing.offense_enabled" type="checkbox"><small>关闭后只采集和防守。</small></label>
+                <label class="field"><span>最早进攻回合</span><input data-path="pacing.offense_after_ticks" type="number" min="0" max="100000"></label>
+                <label class="field"><span>进攻前最少资源</span><input data-path="pacing.offense_min_resources" type="number" min="0" max="10000"></label>
+                <label class="field"><span>进攻前最少人口</span><input data-path="pacing.offense_min_population" type="number" min="0" max="100"></label>
+                <label class="field"><span>至少先锋数量</span><input data-path="pacing.offense_min_vanguards" type="number" min="0" max="100"></label>
+                <label class="field"><span>至少游侠数量</span><input data-path="pacing.offense_min_rangers" type="number" min="0" max="100"></label>
+                <label class="field"><span>至少战斗单位</span><input data-path="pacing.offense_min_defenders" type="number" min="0" max="100"></label>
+                <label class="field"><span>进攻离 Core 最远（格子数）</span><input data-path="pacing.offense_radius" type="number" min="0" max="500"></label>
+              </div>
+              <p class="card-hint">不想研究数字时，直接选择上面的预设即可。想扩展新阶段或新任务，可继续在 pacing 配置中增加字段，不会破坏现有保存接口。</p>
+            </article>
+
+            <article class="panel strategy-card vanguard-accent">
+              <div class="panel-heading small">
+                <div><p class="eyebrow">VANGUARD FRONT</p><h2>先锋设置</h2></div>
+                <span class="section-icon">V</span>
+              </div>
+              <div class="field-grid two compact-grid">
+                <label class="field"><span>前期先锋活动距离（格子数）</span><input data-path="vanguards.early_scout_radius" type="number" min="0" max="500"><small>只影响先锋巡逻，不改变工人采矿范围。</small></label>
+                <label class="field"><span>后期先锋活动距离（格子数）</span><input data-path="vanguards.late_scout_radius" type="number" min="0" max="500"></label>
+              </div>
+              <p class="card-hint">先锋是近战和开路单位。前期会在 Core 附近巡逻，满足后期进攻条件后才会追击远处敌人。</p>
+            </article>
+
+            <article class="panel strategy-card beacon-accent">
+              <div class="panel-heading small">
+                <div><p class="eyebrow">PUBLIC OBJECTIVE</p><h2>Beacon 公共目标</h2></div>
+                <span class="section-icon">B</span>
+              </div>
+              <div class="field-grid two compact-grid">
+                <label class="field"><span>最早尝试回合（游戏 Tick）</span><input data-path="vanguards.beacon_after_ticks" type="number" min="0" max="100000"><small>从战术开始计算的游戏回合数，不是现实秒；到达后才允许尝试 Beacon。</small></label>
+                <label class="field"><span>至少保留战斗单位</span><input data-path="vanguards.beacon_min_defenders" type="number" min="0" max="100"><small>守军不足时不会主动去拿。</small></label>
+              </div>
+              <p class="card-hint">拿到 Beacon 后采集效率和 Core 护盾上限会提高，但也更容易暴露位置。建议先发展经济和守军。</p>
+            </article>
+
+            <article class="panel strategy-card ranger-accent">
+              <div class="panel-heading small">
+                <div><p class="eyebrow">RANGER SCREEN</p><h2>游侠分工</h2></div>
+                <span class="section-icon">R</span>
+              </div>
+              <div class="ratio-line">
+                <label class="field"><span>守卫比例</span><input data-path="rangers.guard_numerator" type="number" min="1" max="100"></label>
+                <span class="ratio-mark">/</span>
+                <label class="field"><span>分母</span><input data-path="rangers.guard_denominator" type="number" min="1" max="100"></label>
+                <label class="field"><span>守卫半径（格子数）</span><input data-path="rangers.guard_radius" type="number" min="0" max="500"></label>
+              </div>
+              <p class="card-hint">默认 2/3，因此 3 名游侠会自动分成 2 守 1 外。警戒和生存姿态全部回防。</p>
+            </article>
+
+            <article class="panel strategy-card core-accent wide-card">
+              <div class="panel-heading small">
+                <div><p class="eyebrow">CORE RELOCATION</p><h2>危险时自动搬家</h2></div>
+                <label class="switch-row compact">
+                  <span>允许自动搬家</span>
+                  <input data-path="core.migration_enabled" type="checkbox">
+                  <span class="switch" aria-hidden="true"></span>
+                </label>
+              </div>
+              <div class="field-grid six compact-grid">
+                <label class="field"><span>危险分数达到就搬</span><input data-path="core.migration_danger_score" type="number" min="0" max="100" step="0.1"><small>风险达到此分数才考虑迁移，不再按固定回合触发。</small></label>
+                <label class="field"><span>两次搬家至少间隔（Tick）</span><input data-path="core.migration_cooldown_ticks" type="number" min="0" max="100000"><small>避免 Core 来回移动。</small></label>
+                <label class="field"><span>至少先锋掩护</span><input data-path="core.migration_min_vanguards" type="number" min="0" max="100"><small>搬家时负责近战保护。</small></label>
+                <label class="field"><span>至少游侠掩护</span><input data-path="core.migration_min_rangers" type="number" min="0" max="100"><small>搬家时负责远程保护。</small></label>
+                <label class="field"><span>工人撤离半径（格子数）</span><input data-path="core.worker_evacuation_radius" type="number" min="1" max="500"><small>搬家期间工人会离开 Core，优先找低危险格子。</small></label>
+                <label class="field"><span>新地点安全提升</span><input data-path="core.cover_gain_required" type="number" min="0" max="100" step="0.1"><small>新位置要比旧位置更安全，障碍物多且不封死才算好。</small></label>
+              </div>
+              <p class="card-hint">安全迁移就是“危险时换基地”：系统先检查危险分数，再找有障碍物掩护、但至少保留两个出口的位置。先锋和游侠留下护航，工人撤到低危险区域；搬家期间暂停生产和交付。</p>
+            </article>
+          </div>
+        </section>
+
+        <aside class="status-column" aria-label="实时状态">
+          <article class="panel sticky-panel">
+            <div class="panel-heading">
+              <div><p class="eyebrow">LIVE FLEET</p><h2>舰队状态</h2></div>
+              <span class="live-badge" id="liveBadge">离线</span>
+            </div>
+            <div class="core-status" id="coreStatus">
+              <div class="empty-state">启动战术后显示 Core 状态</div>
+            </div>
+            <div class="unit-filter" role="group" aria-label="单位筛选">
+              <button class="filter active" data-filter="ALL" type="button">全部</button>
+              <button class="filter" data-filter="WORKER" type="button">工人</button>
+              <button class="filter" data-filter="VANGUARD" type="button">先锋</button>
+              <button class="filter" data-filter="RANGER" type="button">游侠</button>
+            </div>
+            <div class="unit-list" id="unitList">
+              <div class="empty-state">暂无运行快照</div>
+            </div>
+          </article>
+
+          <article class="panel">
+            <div class="panel-heading small">
+              <div><p class="eyebrow">RESOURCE INTEL</p><h2>资源情报</h2></div>
+              <span class="count-badge" id="resourceCount">0</span>
+            </div>
+            <p class="card-hint" id="resourcePlan">可采候选 0 · 本回合采集分配 0 · 有效半径 0/—</p>
+            <p class="card-hint" id="adaptivePlan">自动优化：等待运行数据</p>
+            <div class="resource-group">
+              <h3>当前可见</h3>
+              <div class="tag-cloud" id="visibleResources"><span class="muted">暂无</span></div>
+            </div>
+            <div class="resource-group">
+              <h3>记忆矿点</h3>
+              <div class="tag-cloud" id="rememberedResources"><span class="muted">暂无</span></div>
+            </div>
+          </article>
+
+          <article class="panel">
+            <div class="panel-heading small">
+              <div><p class="eyebrow">LAST RESOLUTION</p><h2>最近事件</h2></div>
+            </div>
+            <div class="event-list" id="eventList">
+              <div class="empty-state">暂无事件</div>
+            </div>
+          </article>
+        </aside>
+      </div>
+    </main>
+  </div>
+
+  <div class="save-dock">
+    <div>
+      <strong id="dirtyLabel">配置已同步</strong>
+      <span id="saveHint">修改后将在下一个 Arena Hero Turn 热加载。</span>
+    </div>
+    <div class="dock-actions">
+      <button class="button ghost" id="resetButton" type="button">恢复默认</button>
+      <button class="button primary" id="dockSaveButton" type="button">保存配置</button>
+    </div>
+  </div>
+
+  <div class="toast" id="toast" role="status" aria-live="polite"></div>
+  <script src="/app.js" defer></script>
+</body>
+</html>

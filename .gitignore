@@ -1,0 +1,56 @@
+# Credentials and local overrides
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+*.p12
+*.pfx
+
+# Arena Hero runtime state
+.arena_hero_state.json
+.arena_hero_state.json.tmp
+.arena_hero_dashboard_state.json
+.arena_hero_dashboard_state.json.tmp
+strategy_config.json.tmp
+*.log
+*.har
+*.pcap
+*.pcapng
+*.sqlite
+*.sqlite3
+*.db
+*.dmp
+*.stackdump
+*.bak
+*.tmp
+
+# Python
+.venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.coverage
+htmlcov/
+build/
+dist/
+*.egg-info/
+
+# Editors and operating systems
+.idea/
+.vscode/
+*.code-workspace
+.DS_Store
+Thumbs.db
+Desktop.ini
+
+# Local exports
+backups/
+screenshots/
+recordings/
+theme-*.png
+*.zip
+*.7z
+*.rar
+*.tar
+*.tar.gz
