@@ -7,9 +7,11 @@ import time
 import unittest
 import urllib.error
 import urllib.request
+from dataclasses import replace
 from pathlib import Path
 
 from dashboard_state import build_dashboard_state
+from peace_economy_training import apply_peace_training, train_peace_economy
 from strategy_config import (
     StrategyConfigError,
     default_config_dict,
@@ -23,6 +25,75 @@ from balanced_tactic import TacticMemory
 
 
 class StrategyConfigTests(unittest.TestCase):
+    def test_peace_training_prefers_productive_scout_count(self) -> None:
+        history = []
+        for tick in range(1, 17):
+            scouts = 16 if tick <= 8 else 8
+            history.append(
+                {
+                    "tick": tick,
+                    "workers": 17,
+                    "deposited": 1 if scouts == 16 and tick % 4 == 0 else 0,
+                    "harvested": 1 if scouts == 16 and tick % 3 == 0 else 0,
+                    "harvest_successes": 1 if scouts == 16 and tick % 3 == 0 else 0,
+                    "harvest_failures": 0,
+                    "candidates": 1 if scouts == 16 else 0,
+                    "assignments": 1 if scouts == 16 else 0,
+                    "scouts": scouts,
+                    "busy": 17 if scouts == 16 else 9,
+                    "storage_full": 0,
+                    "new_cells": 8 if scouts == 16 else 1,
+                }
+            )
+
+        result = train_peace_economy(history, [10, 14, 18])
+        document = apply_peace_training(default_config_dict(), result)
+
+        self.assertEqual(result.max_economy_scouts, 16)
+        self.assertEqual(result.worker_target, 17)
+        self.assertEqual(
+            document["production"]["order"],
+            [
+                {"unit_type": "WORKER", "target": 17},
+                {"unit_type": "VANGUARD", "target": 1},
+                {"unit_type": "RANGER", "target": 1},
+            ],
+        )
+        self.assertEqual(document["adaptive_economy"]["worker_target_min"], 17)
+        self.assertIn("peace_economy_training", document["extensions"])
+
+    def test_peace_training_rejects_confidence_downgrade(self) -> None:
+        history = [
+            {
+                "tick": tick,
+                "workers": 17,
+                "deposited": 1,
+                "harvested": 1,
+                "harvest_successes": 1,
+                "harvest_failures": 0,
+                "candidates": 1,
+                "assignments": 1,
+                "scouts": 12,
+                "busy": 17,
+                "storage_full": 0,
+                "new_cells": 8,
+            }
+            for tick in range(1, 17)
+        ]
+        medium = train_peace_economy(history)
+        current = apply_peace_training(default_config_dict(), medium)
+        low = replace(medium, confidence="low", max_economy_scouts=13)
+
+        guarded = apply_peace_training(current, low)
+        forced = apply_peace_training(
+            current,
+            low,
+            allow_confidence_downgrade=True,
+        )
+
+        self.assertEqual(guarded, current)
+        self.assertEqual(forced["workers"]["max_economy_scouts"], 13)
+
     def test_defaults_are_valid_and_include_every_unit_type(self) -> None:
         config = strategy_config_from_dict(default_config_dict())
         self.assertEqual(

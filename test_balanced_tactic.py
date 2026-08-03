@@ -6,7 +6,7 @@ from pathlib import Path
 from types import SimpleNamespace
 from uuid import UUID
 
-from arena_hero import BeaconStatus, CoreState, Direction, UnitType
+from arena_hero import APIError, BeaconStatus, CoreState, Direction, UnitType
 
 from balanced_tactic import (
     PHASE_EARLY,
@@ -16,10 +16,12 @@ from balanced_tactic import (
     POSTURE_SURVIVAL,
     TacticMemory,
     _exploration_radius,
+    _is_tick_mismatch,
     _offense_ready,
     _normalize_api_key,
     _resource_radius,
     _strategy_phase,
+    _worker_scout_limit,
     choose_actions,
 )
 from strategy_config import default_config_dict, strategy_config_from_dict
@@ -185,6 +187,14 @@ def moved_position(unit: FakeUnit) -> Position:
 
 
 class BalancedTacticTests(unittest.TestCase):
+    def test_only_tick_mismatch_is_treated_as_a_stale_submission(self) -> None:
+        self.assertTrue(
+            _is_tick_mismatch(APIError(status_code=409, error="TICK_MISMATCH"))
+        )
+        self.assertFalse(
+            _is_tick_mismatch(APIError(status_code=409, error="OTHER_CONFLICT"))
+        )
+
     def test_api_key_copy_artifacts_are_removed(self) -> None:
         self.assertEqual(
             _normalize_api_key(" \ufeff“agent-\nkey-123”\u200b "),
@@ -479,7 +489,8 @@ class BalancedTacticTests(unittest.TestCase):
             FakeUnit(4, (0, 0), UnitType.WORKER),
         ]
         memory = TacticMemory()
-        choose_actions(FakeTurn(units=workers, resources=0), memory)
+        config = strategy_config_from_dict(default_config_dict())
+        choose_actions(FakeTurn(units=workers, resources=0), memory, config)
         self.assertEqual(len(memory.scout_targets), 1)
         scout_ids = set(memory.scout_targets)
         self.assertEqual(
@@ -519,6 +530,22 @@ class BalancedTacticTests(unittest.TestCase):
         self.assertEqual(_strategy_phase(turn, memory, config), PHASE_MID)
         self.assertEqual(_resource_radius(turn, memory, config), 22)
         self.assertIn((15, 0), memory.worker_targets.values())
+
+    def test_disabled_pacing_keeps_adaptive_search_radius_active(self) -> None:
+        document = default_config_dict()
+        document["pacing"]["enabled"] = False
+        config = strategy_config_from_dict(document)
+        memory = TacticMemory()
+        turn = FakeTurn(core=FakeCore(position=(0, 0)))
+
+        self.assertEqual(_resource_radius(turn, memory, config), 44)
+        self.assertEqual(_exploration_radius(turn, memory, config), 44)
+
+    def test_adaptive_scout_bonus_adds_to_economy_scout_limit(self) -> None:
+        config = strategy_config_from_dict(default_config_dict())
+        memory = TacticMemory(adaptive_scout_bonus=2)
+
+        self.assertEqual(_worker_scout_limit(FakeTurn(), memory, config), 3)
 
     def test_late_phase_requires_economy_before_offense(self) -> None:
         units = [
@@ -615,6 +642,7 @@ class BalancedTacticTests(unittest.TestCase):
         vanguard = FakeUnit(1, (5, 0), UnitType.VANGUARD, hp=4)
         target = enemy(101, (8, 0), UnitType.RANGER)
         memory = TacticMemory(first_tick=1, last_tick=9)
+        config = strategy_config_from_dict(default_config_dict())
         choose_actions(
             FakeTurn(
                 tick=10,
@@ -623,6 +651,7 @@ class BalancedTacticTests(unittest.TestCase):
                 resources=0,
             ),
             memory,
+            config,
         )
         self.assertEqual(memory.last_posture, POSTURE_ECONOMY)
         self.assertIn(vanguard.id, memory.combat_targets)
@@ -633,6 +662,7 @@ class BalancedTacticTests(unittest.TestCase):
         second_guard = FakeUnit(2, (3, 3), UnitType.RANGER)
         outer = FakeUnit(3, (10, 0), UnitType.RANGER)
         memory = TacticMemory(first_tick=1, last_tick=99)
+        config = strategy_config_from_dict(default_config_dict())
         choose_actions(
             FakeTurn(
                 tick=100,
@@ -640,6 +670,7 @@ class BalancedTacticTests(unittest.TestCase):
                 resources=0,
             ),
             memory,
+            config,
         )
         self.assertNotIn(first_guard.id, memory.combat_targets)
         self.assertNotIn(second_guard.id, memory.combat_targets)

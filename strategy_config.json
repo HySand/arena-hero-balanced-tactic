@@ -5,50 +5,50 @@
     "order": [
       {
         "unit_type": "WORKER",
-        "target": 6
+        "target": 17
       },
       {
         "unit_type": "VANGUARD",
-        "target": 2
+        "target": 1
       },
       {
         "unit_type": "RANGER",
-        "target": 3
+        "target": 1
       }
     ],
     "reserve_resources": 5,
-    "max_population": 18,
-    "after_plan": "adaptive"
+    "max_population": 19,
+    "after_plan": "hold"
   },
   "threat": {
-    "guarded_score": 2.0,
-    "survival_score": 4.0
+    "guarded_score": 1.5,
+    "survival_score": 3.5
   },
   "workers": {
-    "max_economy_scouts": 8,
+    "max_economy_scouts": 14,
     "max_scouts_under_threat": 1,
     "safe_scout_radius": 12
   },
   "adaptive_economy": {
     "enabled": true,
-    "window_ticks": 12,
-    "warmup_ticks": 8,
-    "adjustment_cooldown_ticks": 6,
-    "radius_step": 2,
-    "min_resource_radius": 6,
+    "window_ticks": 24,
+    "warmup_ticks": 12,
+    "adjustment_cooldown_ticks": 3,
+    "radius_step": 8,
+    "min_resource_radius": 24,
     "max_resource_radius": 44,
     "scarcity_ticks": 3,
-    "long_cycle_ticks": 24,
-    "low_throughput_per_worker": 0.025,
-    "healthy_throughput_per_worker": 0.05,
-    "max_harvest_failure_rate": 0.25,
-    "storage_full_ratio": 0.5,
+    "long_cycle_ticks": 74,
+    "low_throughput_per_worker": 0.0063,
+    "healthy_throughput_per_worker": 0.0251,
+    "max_harvest_failure_rate": 0.15,
+    "storage_full_ratio": 0.4,
     "max_scout_bonus": 2,
-    "worker_target_min": 4,
-    "worker_target_max": 8
+    "worker_target_min": 17,
+    "worker_target_max": 17
   },
   "pacing": {
-    "enabled": true,
+    "enabled": false,
     "early_ticks": 80,
     "mid_ticks": 180,
     "early_population": 6,
@@ -72,26 +72,53 @@
     "offense_radius": 36
   },
   "vanguards": {
-    "early_scout_radius": 80,
-    "late_scout_radius": 120,
-    "beacon_after_ticks": 240,
-    "beacon_min_defenders": 4
+    "early_scout_radius": 44,
+    "late_scout_radius": 44,
+    "beacon_after_ticks": 100000,
+    "beacon_min_defenders": 8
   },
   "rangers": {
-    "guard_numerator": 2,
-    "guard_denominator": 3,
+    "guard_numerator": 1,
+    "guard_denominator": 1,
     "guard_radius": 3
   },
   "core": {
-    "migration_enabled": true,
-    "migration_danger_score": 3.0,
+    "migration_enabled": false,
+    "migration_danger_score": 3.5,
     "migration_start_ticks": 0,
     "migration_cooldown_ticks": 20,
     "migration_min_workers": 0,
     "migration_min_vanguards": 1,
     "migration_min_rangers": 1,
     "worker_evacuation_radius": 8,
-    "cover_gain_required": 1.5
+    "cover_gain_required": 2.0
   },
-  "extensions": {}
+  "extensions": {
+    "peace_economy_training": {
+      "sample_count": 150,
+      "tick_start": 42544,
+      "tick_end": 42701,
+      "score": 11.6132,
+      "confidence": "medium",
+      "max_economy_scouts": 14,
+      "max_scout_bonus": 2,
+      "window_ticks": 24,
+      "warmup_ticks": 12,
+      "adjustment_cooldown_ticks": 3,
+      "radius_step": 8,
+      "min_resource_radius": 24,
+      "max_resource_radius": 44,
+      "scarcity_ticks": 3,
+      "long_cycle_ticks": 74,
+      "low_throughput_per_worker": 0.0063,
+      "healthy_throughput_per_worker": 0.0251,
+      "max_harvest_failure_rate": 0.15,
+      "storage_full_ratio": 0.4,
+      "worker_target": 17,
+      "selected_scout_samples": 9,
+      "outcome_events": 16,
+      "trained_at": "2026-08-03T01:29:55.533323+00:00",
+      "objective": "resource delivery, harvesting, discovery and utilization minus failures, overflow and idle worker time"
+    }
+  }
 }

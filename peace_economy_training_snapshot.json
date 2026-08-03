@@ -1,0 +1,65 @@
+{
+  "version": 1,
+  "frozen_at": "2026-08-03T01:36:55.210272+00:00",
+  "composition": {
+    "workers": 17,
+    "vanguards": 1,
+    "rangers": 1,
+    "population": 19
+  },
+  "telemetry_summary": {
+    "sample_count": 166,
+    "tick_start": 42544,
+    "tick_end": 42748,
+    "outcome_events": 17,
+    "harvest_successes": 9,
+    "deposits": 8,
+    "completed_cycles": 11
+  },
+  "published_default": {
+    "score": 11.6132,
+    "confidence": "medium",
+    "sample_count": 150,
+    "max_economy_scouts": 14,
+    "max_scout_bonus": 2,
+    "window_ticks": 24,
+    "warmup_ticks": 12,
+    "adjustment_cooldown_ticks": 3,
+    "radius_step": 8,
+    "min_resource_radius": 24,
+    "max_resource_radius": 44,
+    "scarcity_ticks": 3,
+    "long_cycle_ticks": 74,
+    "low_throughput_per_worker": 0.0063,
+    "healthy_throughput_per_worker": 0.0251,
+    "max_harvest_failure_rate": 0.15,
+    "storage_full_ratio": 0.4,
+    "selected_scout_samples": 9,
+    "outcome_events": 16
+  },
+  "latest_candidate": {
+    "score": 11.0685,
+    "confidence": "low",
+    "sample_count": 166,
+    "max_economy_scouts": 13,
+    "max_scout_bonus": 2,
+    "window_ticks": 24,
+    "warmup_ticks": 12,
+    "adjustment_cooldown_ticks": 3,
+    "radius_step": 8,
+    "min_resource_radius": 24,
+    "max_resource_radius": 44,
+    "scarcity_ticks": 3,
+    "long_cycle_ticks": 74,
+    "low_throughput_per_worker": 0.0057,
+    "healthy_throughput_per_worker": 0.0227,
+    "max_harvest_failure_rate": 0.15,
+    "storage_full_ratio": 0.4,
+    "selected_scout_samples": 5,
+    "outcome_events": 17
+  },
+  "selection": {
+    "status": "kept_published_default",
+    "reason": "latest candidate confidence is lower than the published model"
+  }
+}

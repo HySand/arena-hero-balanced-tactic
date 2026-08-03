@@ -24,6 +24,7 @@ from typing import Iterable
 from uuid import UUID
 
 from arena_hero import (
+    APIError,
     ArenaHeroClient,
     AuthenticationError,
     BeaconStatus,
@@ -130,7 +131,7 @@ STAGING_RADIUS = 2
 RETURN_TRIP_WEIGHT = 1.0  # every outbound step also needs a reliable trip home
 REMEMBERED_NODE_PENALTY = 2.0  # unseen (remembered) nodes are less trustworthy
 STICKY_TARGET_BONUS = 1.5  # avoid target flip-flopping between ticks
-ADAPTIVE_HISTORY_LIMIT = 64
+ADAPTIVE_HISTORY_LIMIT = 256
 
 
 # Spawning / reserves
@@ -1611,9 +1612,11 @@ def _sector_waypoint(
     radius: int = EXPLORATION_RADIUS,
 ) -> Position:
     offset_x, offset_y = EXPLORATION_OFFSETS[sector]
+    # Keep diagonal waypoints on the same Manhattan ring as cardinal ones.
+    scale = radius if offset_x == 0 or offset_y == 0 else max(1, radius // 2)
     return (
-        core_position[0] + offset_x * radius,
-        core_position[1] + offset_y * radius,
+        core_position[0] + offset_x * scale,
+        core_position[1] + offset_y * scale,
     )
 
 
@@ -1716,9 +1719,11 @@ def _choose_scout_target(
     fallback = _sector_waypoint(core_position, sector, max_radius)
     if (
         target is None
+        and fallback != worker.position
         and fallback not in claimed
         and fallback not in memory.obstacle_cells
         and not danger.is_unsafe(fallback)
+        and _distance(fallback, core_position) <= max_radius
         and pathfinder.distance_to(worker.position, fallback) is not None
     ):
         target = fallback
@@ -2289,7 +2294,11 @@ def _base_resource_radius(
     config: StrategyConfig,
 ) -> int | None:
     if not config.pacing.enabled:
-        return None
+        if not config.adaptive_economy.enabled:
+            return None
+        # With phase pacing disabled, use the operator's full configured range.
+        # Safety posture still applies ``safe_scout_radius`` below.
+        return config.adaptive_economy.max_resource_radius
     phase = _strategy_phase(turn, memory, config)
     return _phase_value(
         phase,
@@ -2525,7 +2534,9 @@ def _exploration_radius(
     config: StrategyConfig,
 ) -> int:
     if not config.pacing.enabled:
-        base_radius = EXPLORATION_RADIUS
+        base_radius = _base_resource_radius(turn, memory, config)
+        if base_radius is None:
+            base_radius = EXPLORATION_RADIUS
     else:
         phase = _strategy_phase(turn, memory, config)
         base_radius = _phase_value(
@@ -2557,7 +2568,7 @@ def _worker_scout_limit(
     bonus = (
         memory.adaptive_scout_bonus if config.adaptive_economy.enabled else 0
     )
-    return min(config.workers.max_economy_scouts, base_limit + bonus)
+    return min(100, base_limit + bonus)
 
 
 def _offense_economy_ready(
@@ -3257,6 +3268,10 @@ def _print_turn_debug(
     )
 
 
+def _is_tick_mismatch(error: APIError) -> bool:
+    return error.status_code == 409 and error.error == "TICK_MISMATCH"
+
+
 def play(api_key: str) -> None:
     memory = TacticMemory.load(STATE_FILE)
     with ArenaHeroClient(api_key=api_key) as game:
@@ -3264,7 +3279,17 @@ def play(api_key: str) -> None:
             config = load_strategy_config()
             choose_actions(turn, memory, config)
             _print_turn_debug(turn, memory, config)
-            accepted = turn.submit()
+            try:
+                accepted = turn.submit()
+            except APIError as error:
+                if _is_tick_mismatch(error):
+                    if DEBUG_TURNS:
+                        print(
+                            f"tick={turn.tick} skipped=TICK_MISMATCH",
+                            flush=True,
+                        )
+                    continue
+                raise
             try:
                 memory.save(STATE_FILE)
             except OSError as error:

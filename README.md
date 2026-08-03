@@ -78,13 +78,19 @@ ARENA_HERO_API_KEY=你的_API_KEY
 
 ## 默认策略
 
-- 前期围绕 Core 采集近矿，只安排少量工人探索；配置半径作为效率上限，近矿够用时不会为了填满半径追更远的矿。
-- 中期根据人口和 Tick 扩大资源搜索与探索半径。
-- 后期只有在资源、人口、先锋、游侠和留守兵力都达标时才允许进攻。
-- 发现危险时，安全逻辑始终优先于探索、Beacon 和进攻。
-- Core 迁移由危险分数触发，并优先寻找障碍更多且仍有出口的位置。
+仓库默认使用冻结的和平经济模型：`17 工人 / 1 先锋 / 1 游侠 = 19`，不进入人口维护费档位。默认关闭 Core 迁移和主动进攻，游侠留守 Core，空闲工人负责采矿与分区探索。
 
-建议第一次使用控制台中的“平衡扩张”预设，再逐步修改具体数字。
+默认经济参数来自 2026 年 8 月 3 日的 150 Tick 实战遥测，包含 8 次采集和 8 次存入结果，训练置信度为 `medium`。基础侦察工人数为 14，动态加成上限为 2，资源搜索半径为 24-44。原始 `.arena_hero_state.json` 含本地游戏状态，已被 `.gitignore` 排除，不随仓库发布；可发布的训练摘要保存在 `strategy_config.json` 的 `extensions.peace_economy_training` 中。
+
+本次发布冻结时已积累 166 Tick、9 次采集和 8 次存入。最新 166 Tick 候选的置信度降为 `low`，因此没有覆盖已验证的 `medium` 默认模型。去除个人游戏状态后的完整对比摘要保存在 `peace_economy_training_snapshot.json`。
+
+积累新的本地遥测后，可重新训练并应用参数：
+
+```powershell
+./.venv/Scripts/python.exe peace_economy_training.py --apply
+```
+
+训练器默认拒绝用低置信度结果覆盖现有中高置信度模型。只有明确需要降级覆盖时才使用 `--force`。
 
 ## 项目结构
 
@@ -94,6 +100,8 @@ ARENA_HERO_API_KEY=你的_API_KEY
 - `tactic_dashboard.py`：本地 HTTP 控制台服务。
 - `dashboard/`：网页界面。
 - `dashboard_state.py`：写入不含凭据的实时状态快照。
+- `peace_economy_training.py`：从本地遥测训练和平经济默认参数。
+- `peace_economy_training_snapshot.json`：当前发布所用模型与最新冻结候选的匿名汇总。
 - `test_balanced_tactic.py`：战术行为测试。
 - `test_strategy_config.py`：配置和控制台 API 测试。
 - `verify.cmd`：本地完整验收入口。

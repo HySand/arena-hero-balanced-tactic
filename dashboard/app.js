@@ -62,6 +62,61 @@ const THEME_DEFAULTS = {
   },
 };
 
+const PRODUCTION_STYLES = {
+  peace: {
+    help: "17 工人持续寻矿，1 先锋机动支援，1 游侠守卫 Core；保持 19 人口，不产生维护费。",
+    production: {
+      enabled: true,
+      order: [
+        { unit_type: "WORKER", target: 17 },
+        { unit_type: "VANGUARD", target: 1 },
+        { unit_type: "RANGER", target: 1 },
+      ],
+      reserve_resources: 5,
+      max_population: 19,
+      after_plan: "hold",
+    },
+    workerTarget: 17,
+    rangerGuard: [1, 1],
+    coreMigration: false,
+  },
+  combat: {
+    help: "8 工人维持经济，5 先锋压制近战，6 游侠提供火力；保持 19 人口，不产生维护费。",
+    production: {
+      enabled: true,
+      order: [
+        { unit_type: "VANGUARD", target: 5 },
+        { unit_type: "RANGER", target: 6 },
+        { unit_type: "WORKER", target: 8 },
+      ],
+      reserve_resources: 5,
+      max_population: 19,
+      after_plan: "hold",
+    },
+    workerTarget: 8,
+    rangerGuard: [1, 2],
+    coreMigration: true,
+  },
+};
+
+const PEACE_ECONOMY_FALLBACK = {
+  max_economy_scouts: 14,
+  max_scout_bonus: 2,
+  window_ticks: 24,
+  warmup_ticks: 12,
+  adjustment_cooldown_ticks: 3,
+  radius_step: 8,
+  min_resource_radius: 24,
+  max_resource_radius: 44,
+  scarcity_ticks: 3,
+  long_cycle_ticks: 74,
+  low_throughput_per_worker: 0.0063,
+  healthy_throughput_per_worker: 0.0251,
+  max_harvest_failure_rate: 0.15,
+  storage_full_ratio: 0.4,
+  worker_target: 17,
+};
+
 const PACING_PRESETS = {
   safe: {
     label: "保守采集",
@@ -399,6 +454,76 @@ function applyPacingPreset(presetName) {
   setDirty();
 }
 
+function productionMatchesStyle(styleName) {
+  const style = PRODUCTION_STYLES[styleName];
+  const production = state.config?.production;
+  if (!style || !production) return false;
+  return production.enabled === style.production.enabled
+    && production.reserve_resources === style.production.reserve_resources
+    && production.max_population === style.production.max_population
+    && production.after_plan === style.production.after_plan
+    && JSON.stringify(production.order) === JSON.stringify(style.production.order);
+}
+
+function syncProductionStyle() {
+  if (!state.config) return;
+  const matched = Object.keys(PRODUCTION_STYLES).find(productionMatchesStyle);
+  document.querySelectorAll("[data-production-style]").forEach((button) => {
+    const active = button.dataset.productionStyle === matched;
+    button.classList.toggle("active", active);
+    button.setAttribute("aria-pressed", String(active));
+  });
+  let help = matched
+    ? PRODUCTION_STYLES[matched].help
+    : "当前是自定义编制。可继续手动调整，或选择一个后期风格重新套用。";
+  if (matched === "peace") {
+    const training = state.config.extensions?.peace_economy_training;
+    if (training) {
+      help += ` 训练样本 ${training.sample_count} Tick，置信度 ${training.confidence}。`;
+    }
+  }
+  $("productionStyleHelp").textContent = help;
+}
+
+function applyProductionStyle(styleName) {
+  const style = PRODUCTION_STYLES[styleName];
+  if (!style || !state.config) return;
+  state.config.production = deepClone(style.production);
+  if (styleName === "peace") {
+    const training = {
+      ...PEACE_ECONOMY_FALLBACK,
+      ...(state.config.extensions?.peace_economy_training || {}),
+    };
+    state.config.workers.max_economy_scouts = training.max_economy_scouts;
+    [
+      "window_ticks",
+      "warmup_ticks",
+      "adjustment_cooldown_ticks",
+      "radius_step",
+      "min_resource_radius",
+      "max_resource_radius",
+      "scarcity_ticks",
+      "long_cycle_ticks",
+      "low_throughput_per_worker",
+      "healthy_throughput_per_worker",
+      "max_harvest_failure_rate",
+      "storage_full_ratio",
+      "max_scout_bonus",
+    ].forEach((key) => {
+      state.config.adaptive_economy[key] = training[key];
+    });
+  }
+  state.config.adaptive_economy.worker_target_min = style.workerTarget;
+  state.config.adaptive_economy.worker_target_max = style.workerTarget;
+  [
+    state.config.rangers.guard_numerator,
+    state.config.rangers.guard_denominator,
+  ] = style.rangerGuard;
+  state.config.core.migration_enabled = style.coreMigration;
+  renderConfig();
+  setDirty();
+}
+
 function bindStaticControls() {
   $("themePreset").addEventListener("change", (event) => {
     const theme = event.target.value;
@@ -410,24 +535,33 @@ function bindStaticControls() {
   $("pacingPreset").addEventListener("change", (event) => {
     applyPacingPreset(event.target.value);
   });
+  document.querySelectorAll("[data-production-style]").forEach((button) => {
+    button.addEventListener("click", () => {
+      applyProductionStyle(button.dataset.productionStyle);
+    });
+  });
 
   $("productionEnabled").addEventListener("change", (event) => {
     state.config.production.enabled = event.target.checked;
     setDirty();
+    syncProductionStyle();
     updateProductionSummary();
   });
   $("reserveResources").addEventListener("input", (event) => {
     state.config.production.reserve_resources = numericValue(event.target);
     setDirty();
+    syncProductionStyle();
   });
   $("maxPopulation").addEventListener("input", (event) => {
     state.config.production.max_population = numericValue(event.target);
     setDirty();
+    syncProductionStyle();
     updateProductionSummary();
   });
   $("afterPlan").addEventListener("change", (event) => {
     state.config.production.after_plan = event.target.value;
     setDirty();
+    syncProductionStyle();
     updateProductionSummary();
   });
 
@@ -483,6 +617,7 @@ function renderConfig() {
     else input.value = value;
   });
   syncPacingPreset();
+  syncProductionStyle();
   renderProductionList();
   updateProductionSummary();
 }
@@ -528,6 +663,7 @@ function renderProductionList() {
     targetInput.addEventListener("input", () => {
       step.target = numericValue(targetInput);
       setDirty();
+      syncProductionStyle();
       updateProductionSummary();
     });
     target.append(targetLabel, targetInput);
@@ -575,6 +711,7 @@ function moveProductionStep(from, to) {
   const [step] = order.splice(from, 1);
   order.splice(to, 0, step);
   setDirty();
+  syncProductionStyle();
   renderProductionList();
   updateProductionSummary();
 }
