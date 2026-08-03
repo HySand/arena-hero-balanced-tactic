@@ -1,0 +1,149 @@
+{
+  "version": 1,
+  "objective": "maximize long-run resource throughput and useful worker utilization for a fixed 17 Worker / 1 Vanguard / 1 Ranger peaceful economy",
+  "composition": {
+    "workers": 17,
+    "vanguards": 1,
+    "rangers": 1,
+    "population": 19
+  },
+  "published_default": {
+    "confidence": "provisional",
+    "sample_count": 0,
+    "outcome_events": 0,
+    "parameters": {
+      "workers": {
+        "max_economy_scouts": 12,
+        "max_scouts_under_threat": 1,
+        "safe_scout_radius": 12
+      },
+      "adaptive_economy": {
+        "window_ticks": 24,
+        "warmup_ticks": 12,
+        "adjustment_cooldown_ticks": 3,
+        "radius_step": 8,
+        "min_resource_radius": 24,
+        "max_resource_radius": 96,
+        "scarcity_ticks": 3,
+        "long_cycle_ticks": 80,
+        "low_throughput_per_worker": 0.0058,
+        "healthy_throughput_per_worker": 0.0232,
+        "max_harvest_failure_rate": 0.15,
+        "storage_full_ratio": 0.4,
+        "max_scout_bonus": 2
+      },
+      "production": {
+        "reserve_resources": 5
+      },
+      "vanguards": {
+        "early_scout_radius": 44,
+        "late_scout_radius": 44
+      },
+      "rangers": {
+        "guard_numerator": 1,
+        "guard_denominator": 1,
+        "guard_radius": 3
+      }
+    },
+    "minimum_useful_utilization": 0.75,
+    "rules_basis": "Arena Hero v0.11: unharvested nodes stay put; consumed natural nodes are replaced every 4 settled ticks at deterministic random valid positions in the same 32x32 chunk"
+  },
+  "superseded_default": {
+    "confidence": "high",
+    "sample_count": 243,
+    "outcome_events": 26,
+    "max_resource_radius": 44,
+    "invalidated_at": "2026-08-03T05:30:20Z",
+    "reason": "the tactic capped map expansion and allowed most peaceful Workers to wait at the Core"
+  },
+  "search_stages": [
+    {
+      "stage": 1,
+      "name": "base scout count",
+      "parameters": ["workers.max_economy_scouts"],
+      "status": "invalidated_by_all_idle_workers_search_policy"
+    },
+    {
+      "stage": 2,
+      "name": "resource radius",
+      "parameters": [
+        "adaptive_economy.min_resource_radius",
+        "adaptive_economy.max_resource_radius",
+        "adaptive_economy.radius_step"
+      ],
+      "status": "ready"
+    },
+    {
+      "stage": 3,
+      "name": "adaptation timing",
+      "parameters": [
+        "adaptive_economy.window_ticks",
+        "adaptive_economy.warmup_ticks",
+        "adaptive_economy.adjustment_cooldown_ticks",
+        "adaptive_economy.scarcity_ticks"
+      ],
+      "status": "pending"
+    },
+    {
+      "stage": 4,
+      "name": "throughput and failure thresholds",
+      "parameters": [
+        "adaptive_economy.long_cycle_ticks",
+        "adaptive_economy.low_throughput_per_worker",
+        "adaptive_economy.healthy_throughput_per_worker",
+        "adaptive_economy.max_harvest_failure_rate",
+        "adaptive_economy.storage_full_ratio",
+        "adaptive_economy.max_scout_bonus"
+      ],
+      "status": "pending"
+    }
+  ],
+  "experiment_plan": {
+    "id": "peace-17-1-1-radius-v3",
+    "stage": 2,
+    "design": "three interleaved blocks per candidate",
+    "warmup_samples": 24,
+    "measurement_samples": 240,
+    "minimum_outcomes": 20,
+    "max_measurement_samples": 720,
+    "schedule": [
+      "radius-96",
+      "radius-64",
+      "radius-128",
+      "radius-128",
+      "radius-96",
+      "radius-64",
+      "radius-64",
+      "radius-128",
+      "radius-96"
+    ],
+    "candidates": [
+      {
+        "id": "radius-64",
+        "overrides": {
+          "adaptive_economy": {
+            "max_resource_radius": 64
+          }
+        }
+      },
+      {
+        "id": "radius-96",
+        "overrides": {
+          "adaptive_economy": {
+            "max_resource_radius": 96
+          }
+        }
+      },
+      {
+        "id": "radius-128",
+        "overrides": {
+          "adaptive_economy": {
+            "max_resource_radius": 128
+          }
+        }
+      }
+    ]
+  },
+  "results": [],
+  "last_run": {}
+}

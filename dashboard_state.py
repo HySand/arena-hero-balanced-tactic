@@ -140,6 +140,7 @@ def build_dashboard_state(
         "profile": profile,
         "strategy_phase": strategy_phase,
         "resource_radius": resource_radius,
+        "resource_radius_limit": memory.resource_radius_limit,
         "effective_resource_radius": memory.effective_resource_radius,
         "resource_candidate_count": memory.resource_candidate_count,
         "resource_assignment_count": memory.resource_assignment_count,
@@ -180,6 +181,12 @@ def build_dashboard_state(
         "remembered_resources": [
             list(cell) for cell in sorted(memory.resource_hints)
         ],
+        "map_memory": {
+            "known_cells": len(memory.known_cells),
+            "obstacles": len(memory.obstacle_cells),
+            "visited_cells": len(memory.visited_cells),
+            "bounds": list(memory.bounds) if memory.bounds is not None else None,
+        },
         "worker_losses": memory.worker_losses,
         "planned_deposited": memory.planned_deposited,
         "units": units,

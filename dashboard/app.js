@@ -107,7 +107,7 @@ const PEACE_ECONOMY_FALLBACK = {
   adjustment_cooldown_ticks: 3,
   radius_step: 8,
   min_resource_radius: 24,
-  max_resource_radius: 44,
+  max_resource_radius: 96,
   scarcity_ticks: 3,
   long_cycle_ticks: 80,
   low_throughput_per_worker: 0.0058,
@@ -812,8 +812,9 @@ function renderStatus() {
   const phaseNames = { EARLY: "前期", MID: "中期", LATE: "后期" };
   $("metricPhase").textContent = phaseNames[status?.strategy_phase] || status?.strategy_phase || "—";
   const effectiveRadius = status?.effective_resource_radius ?? 0;
-  const radiusLimit = status?.resource_radius ?? "∞";
-  $("metricPhaseNote").textContent = `矿 ${effectiveRadius}/${radiusLimit} · 探 ${status?.exploration_radius ?? "—"} · 攻 ${status?.offense_ready ? "就绪" : "未就绪"}`;
+  const radiusLimit = status?.resource_radius_limit ?? status?.resource_radius ?? "∞";
+  const map = status?.map_memory || {};
+  $("metricPhaseNote").textContent = `矿 ${effectiveRadius}/${radiusLimit} · 探 ${status?.exploration_radius ?? "—"} · 地图 ${map.known_cells ?? 0} 格 / ${map.obstacles ?? 0} 障碍`;
 
   renderCore();
   renderUnits();
@@ -919,7 +920,9 @@ function renderResources() {
   const visible = state.status?.visible_resources || [];
   const remembered = state.status?.remembered_resources || [];
   $("resourceCount").textContent = String(remembered.length);
-  $("resourcePlan").textContent = `可采候选 ${state.status?.resource_candidate_count ?? 0} · 本回合采集分配 ${state.status?.resource_assignment_count ?? 0} · 有效半径 ${state.status?.effective_resource_radius ?? 0}/${state.status?.resource_radius ?? "∞"}`;
+  const preferredRadius = state.status?.resource_radius ?? "∞";
+  const assignmentLimit = state.status?.resource_radius_limit ?? preferredRadius;
+  $("resourcePlan").textContent = `可采候选 ${state.status?.resource_candidate_count ?? 0} · 本回合采集分配 ${state.status?.resource_assignment_count ?? 0} · 有效半径 ${state.status?.effective_resource_radius ?? 0}/${assignmentLimit} · 近矿首选 ${preferredRadius}`;
   const adaptive = state.status?.adaptive_economy;
   const action = ADAPTIVE_ACTION_NAMES[adaptive?.action] || adaptive?.action || "等待运行";
   const reason = ADAPTIVE_REASON_NAMES[adaptive?.reason] || adaptive?.reason || "暂无反馈样本";

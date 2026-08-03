@@ -38,6 +38,7 @@ from arena_hero import (
 )
 
 from dashboard_state import write_dashboard_state
+from peace_economy_experiment import active_block_id, record_accepted_turn
 from strategy_config import StrategyConfig, load_strategy_config
 
 Position = tuple[int, int]
@@ -156,11 +157,12 @@ UNIT_TARGETS = {
 }
 
 # Pathing / exploration
-PATH_NODE_LIMIT = 2000
-PATH_MAX_DISTANCE = 45
+PATH_NODE_LIMIT = 20000
+PATH_MAX_DISTANCE = 192
 OSCILLATION_WINDOW = 4
-SCOUT_TARGET_MAX_TICKS = 16
+SCOUT_TARGET_MAX_TICKS = 96
 MAP_MARGIN = 14
+ECONOMY_MIN_RECOVERY_RADIUS = 64
 VIEW_RADIUS_CORE = 5
 VIEW_RADIUS_WORKER = 3
 VIEW_RADIUS_VANGUARD = 4
@@ -233,6 +235,14 @@ EXPLORATION_OFFSETS = (
 # --------------------------------------------------------------------------
 def _uuid_key(value: UUID | str) -> bytes:
     return value.bytes if isinstance(value, UUID) else UUID(str(value)).bytes
+
+
+def _chunk_position(position: Position) -> Position:
+    return position[0] // 32, position[1] // 32
+
+
+def _chunk_center(chunk: Position) -> Position:
+    return chunk[0] * 32 + 15, chunk[1] * 32 + 15
 
 
 def _distance(left: Position, right: Position) -> int:
@@ -374,6 +384,8 @@ class TacticMemory:
     combat_sectors: dict[UUID, int] = field(default_factory=dict)
     known_cells: set[Position] = field(default_factory=set)
     visited_cells: Counter[Position] = field(default_factory=Counter)
+    cell_last_seen: dict[Position, int] = field(default_factory=dict)
+    resource_chunks: set[Position] = field(default_factory=set)
     recent_positions: dict[UUID, deque[Position]] = field(default_factory=dict)
     bounds: tuple[int, int, int, int] | None = None
     planned_deposited: int = 0
@@ -417,6 +429,33 @@ class TacticMemory:
     adaptive_new_cells_per_scout: float = 0.0
     adaptive_sample_count: int = 0
     adaptive_scarcity_streak: int = 0
+    economy_experiment_block_id: str | None = None
+
+    def sync_economy_experiment(self, block_id: str | None) -> bool:
+        """Reset candidate-sensitive learning when the experiment block changes."""
+        if block_id == self.economy_experiment_block_id:
+            return False
+        self.economy_experiment_block_id = block_id
+        self.economy_history.clear()
+        self.worker_cycle_started.clear()
+        self.cycle_durations.clear()
+        self.adaptive_radius_delta = 0
+        self.adaptive_scout_bonus = 0
+        self.adaptive_worker_target = None
+        self.adaptive_worker_base_target = None
+        self.adaptive_last_adjust_tick = None
+        self.adaptive_action = "WARMUP"
+        self.adaptive_reason = "collecting_samples"
+        self.adaptive_throughput = 0.0
+        self.adaptive_utilization = 0.0
+        self.adaptive_failure_rate = 0.0
+        self.adaptive_average_cycle_ticks = 0.0
+        self.adaptive_storage_full_ratio = 0.0
+        self.adaptive_new_cells_per_scout = 0.0
+        self.adaptive_sample_count = 0
+        self.adaptive_scarcity_streak = 0
+        return True
+
     def observe(self, turn: Turn) -> None:
         owner_username = (
             getattr(turn.core, "owner_username", None)
@@ -455,11 +494,18 @@ class TacticMemory:
         current_resources = set(turn.resource_cells)
         self.obstacle_cells.update(turn.obstacle_cells)
         self.resource_hints.update(current_resources)
+        self.resource_chunks.update(_chunk_position(cell) for cell in current_resources)
 
         known_cells_before = len(self.known_cells)
         visible = _visible_cells(turn, self.obstacle_cells)
+        for cell in visible:
+            self.cell_last_seen[cell] = turn.tick
         self.known_cells.update(visible)
         self.known_cells.update(self.obstacle_cells)
+        self.known_cells.update(current_resources)
+        self.known_cells.update(unit.position for unit in turn.units)
+        if turn.core is not None:
+            self.known_cells.add(turn.core.position)
         new_known_cells = len(self.known_cells) - known_cells_before
 
         for event in turn.events:
@@ -495,8 +541,8 @@ class TacticMemory:
             ):
                 self.resource_hints.discard(position)
 
-        # A remembered node that is currently observed but no longer a resource
-        # cell is gone for good.
+        # A remembered coordinate that is currently visible but not a resource
+        # is unavailable now. Future quota refills are rediscovered by patrols.
         for position in tuple(self.resource_hints - current_resources):
             if position in visible:
                 self.resource_hints.discard(position)
@@ -652,6 +698,7 @@ class TacticMemory:
             "harvested": harvested,
             "harvest_successes": harvest_successes,
             "harvest_failures": harvest_failures,
+            "deposit_successes": deposit_successes,
             "deposit_full": deposit_full,
             "candidates": max(0, previous_resource_candidates),
             "assignments": max(0, previous_resource_assignments),
@@ -733,6 +780,8 @@ class TacticMemory:
         self.combat_sectors.clear()
         self.known_cells.clear()
         self.visited_cells.clear()
+        self.cell_last_seen.clear()
+        self.resource_chunks.clear()
         self.recent_positions.clear()
         self.bounds = None
         self.planned_deposited = 0
@@ -782,8 +831,14 @@ class TacticMemory:
             return cls()
         try:
             data = json.loads(path.read_text(encoding="utf-8"))
-            if data.get("version") not in {1, 2, 3, 4, 5, 6}:
+            if data.get("version") not in {1, 2, 3, 4, 5, 6, 7, 8, 9, 10}:
                 return cls()
+            raw_bounds = data.get("bounds")
+            bounds = (
+                tuple(int(value) for value in raw_bounds)
+                if isinstance(raw_bounds, list) and len(raw_bounds) == 4
+                else None
+            )
             return cls(
                 owner_username=data.get("owner_username"),
                 resource_hints={tuple(cell) for cell in data.get("resource_hints", [])},
@@ -827,6 +882,19 @@ class TacticMemory:
                         for cell, count in data.get("visited_cells", [])
                     }
                 ),
+                cell_last_seen={
+                    (int(entry[0]), int(entry[1])): max(0, int(entry[2]))
+                    for entry in data.get("cell_last_seen", [])
+                    if len(entry) == 3
+                },
+                resource_chunks={
+                    tuple(chunk) for chunk in data.get("resource_chunks", [])
+                }
+                | {
+                    _chunk_position(tuple(cell))
+                    for cell in data.get("resource_hints", [])
+                },
+                bounds=bounds,
                 planned_deposited=max(0, int(data.get("planned_deposited", 0))),
                 scouting_worker_ticks=max(
                     0, int(data.get("scouting_worker_ticks", 0))
@@ -894,13 +962,16 @@ class TacticMemory:
                 adaptive_scarcity_streak=max(
                     0, int(data.get("adaptive_scarcity_streak", 0))
                 ),
+                economy_experiment_block_id=data.get(
+                    "economy_experiment_block_id"
+                ),
             )
         except (OSError, TypeError, ValueError, json.JSONDecodeError):
             return cls()
 
     def save(self, path: Path) -> None:
         data = {
-            "version": 6,
+            "version": 10,
             "owner_username": self.owner_username,
             "resource_hints": sorted(self.resource_hints),
             "obstacle_cells": sorted(self.obstacle_cells),
@@ -952,6 +1023,12 @@ class TacticMemory:
                 for cell, count in sorted(self.visited_cells.items())
                 if count > 0
             ],
+            "cell_last_seen": [
+                [cell[0], cell[1], tick]
+                for cell, tick in sorted(self.cell_last_seen.items())
+            ],
+            "resource_chunks": sorted(self.resource_chunks),
+            "bounds": self.bounds,
             "planned_deposited": self.planned_deposited,
             "scouting_worker_ticks": self.scouting_worker_ticks,
             "worker_ticks": self.worker_ticks,
@@ -1003,6 +1080,7 @@ class TacticMemory:
             "adaptive_new_cells_per_scout": self.adaptive_new_cells_per_scout,
             "adaptive_sample_count": self.adaptive_sample_count,
             "adaptive_scarcity_streak": self.adaptive_scarcity_streak,
+            "economy_experiment_block_id": self.economy_experiment_block_id,
         }
         temporary = path.with_suffix(path.suffix + ".tmp")
         temporary.write_text(
@@ -1037,17 +1115,23 @@ class TacticMemory:
 # Pathfinding
 # --------------------------------------------------------------------------
 class Pathfinder:
-    """BFS over the known walkable grid, with per-turn distance caching."""
+    """BFS over confirmed walkable cells, with per-turn distance caching.
+
+    Unknown cells can be exploration goals, but are never used as intermediate
+    shortcuts. This prevents remembered walls from being bypassed through fog.
+    """
 
     def __init__(
         self,
         obstacles: set[Position],
         blocked: set[Position],
         bounds: tuple[int, int, int, int] | None,
+        known_cells: set[Position] | None = None,
     ) -> None:
         self.obstacles = obstacles
         self.blocked = blocked
         self.bounds = bounds
+        self.known_cells = known_cells
         self._cache: dict[Position, dict[Position, int]] = {}
 
     def in_bounds(self, position: Position) -> bool:
@@ -1056,8 +1140,13 @@ class Pathfinder:
         min_x, min_y, max_x, max_y = self.bounds
         return min_x <= position[0] <= max_x and min_y <= position[1] <= max_y
 
-    def walkable(self, position: Position) -> bool:
+    def passable(self, position: Position) -> bool:
         return position not in self.blocked and self.in_bounds(position)
+
+    def walkable(self, position: Position) -> bool:
+        return self.passable(position) and (
+            self.known_cells is None or position in self.known_cells
+        )
 
     def distances(self, start: Position) -> dict[Position, int]:
         cached = self._cache.get(start)
@@ -1100,7 +1189,10 @@ class Pathfinder:
                 return None
             target = min(approach, key=lambda cell: (distances[cell], cell))
             if target == start:
-                return None
+                try:
+                    return _direction_between(start, goal)
+                except ValueError:  # pragma: no cover - cardinal frontier only
+                    return None
 
         current = target
         while distances[current] > 1:
@@ -1210,10 +1302,10 @@ class ThreatAssessment:
                 config.workers.max_scouts_under_threat,
             )
 
-        # In a quiet economy every unassigned Worker keeps searching for the
-        # next node. Persistent sectors prevent the fleet from collapsing into
-        # one exploration direction.
-        return min(idle_workers, config.workers.max_economy_scouts)
+        # In a quiet economy an unassigned Worker has no productive reason to
+        # stage at the Core. Every idle Worker searches or patrols a resource
+        # chunk; the configured limit is retained only for old config files.
+        return idle_workers
 
 
 def _assess_threat(
@@ -1320,6 +1412,7 @@ class MovementPlanner:
             self.obstacles,
             self.obstacles | self.enemy_cells,
             memory.bounds if memory is not None else None,
+            memory.known_cells if memory is not None else None,
         )
 
     def predicted_occupancy(self, position: Position) -> int:
@@ -1564,9 +1657,48 @@ def _frontier_targets(memory: TacticMemory, pathfinder: Pathfinder) -> list[Posi
         if cell in memory.obstacle_cells or not pathfinder.walkable(cell):
             continue
         for neighbor in _neighbors(cell):
-            if neighbor not in known and pathfinder.walkable(neighbor):
+            if neighbor not in known and pathfinder.passable(neighbor):
                 frontier.add(neighbor)
     return sorted(frontier)
+
+
+def _resource_chunk_patrol_targets(
+    memory: TacticMemory,
+    pathfinder: Pathfinder,
+    core_position: Position,
+    max_radius: int,
+) -> list[Position]:
+    """Return stale-vision waypoints in chunks that have produced resources."""
+    targets: set[Position] = set()
+    lattice = (4, 12, 20, 28)
+    for chunk in sorted(memory.resource_chunks):
+        center = _chunk_center(chunk)
+        if _distance(center, core_position) > max_radius + 32:
+            continue
+        cells = [
+            cell
+            for cell in memory.known_cells
+            if _chunk_position(cell) == chunk and pathfinder.walkable(cell)
+        ]
+        if not cells:
+            continue
+        for local_x in lattice:
+            for local_y in lattice:
+                ideal = chunk[0] * 32 + local_x, chunk[1] * 32 + local_y
+                nearby = [cell for cell in cells if _distance(cell, ideal) <= 5]
+                pool = nearby or cells
+                targets.add(
+                    min(
+                        pool,
+                        key=lambda cell: (
+                            memory.cell_last_seen.get(cell, -1),
+                            memory.visited_cells[cell],
+                            _distance(cell, ideal),
+                            cell,
+                        ),
+                    )
+                )
+    return sorted(targets)
 
 
 def _scout_information_gain(
@@ -1682,6 +1814,7 @@ def _choose_scout_target(
     core_position: Position,
     sector: int,
     max_radius: int = EXPLORATION_RADIUS,
+    priority_targets: set[Position] | None = None,
 ) -> Position | None:
     """Keep one safe, sector-aligned waypoint until reached or invalidated."""
     existing = memory.scout_targets.get(worker.id)
@@ -1701,21 +1834,29 @@ def _choose_scout_target(
         return existing
 
     _clear_scout_target(memory, worker.id)
-    distances = pathfinder.distances(worker.position)
-    scored = [
-        (
-            round(danger.score(cell), 3),
-            round(_sector_penalty(core_position, cell, sector), 3),
-            memory.visited_cells[cell],
-            -_scout_information_gain(cell, memory),
-            distances[cell],
-            cell,
+    scored = []
+    priority = priority_targets or set()
+    for cell in frontier:
+        distance = pathfinder.distance_to(worker.position, cell)
+        if (
+            cell in claimed
+            or distance is None
+            or danger.is_unsafe(cell)
+            or _distance(cell, core_position) > max_radius
+        ):
+            continue
+        scored.append(
+            (
+                round(danger.score(cell), 3),
+                0 if cell in priority else 1,
+                round(_sector_penalty(core_position, cell, sector), 3),
+                memory.visited_cells[cell],
+                -_scout_information_gain(cell, memory),
+                distance,
+                cell,
+            )
         )
-        for cell in frontier
-        if cell not in claimed and cell in distances and not danger.is_unsafe(cell)
-        and _distance(cell, core_position) <= max_radius
-    ]
-    target = min(scored)[5] if scored else None
+    target = min(scored)[6] if scored else None
     fallback = _sector_waypoint(core_position, sector, max_radius)
     if (
         target is None
@@ -1772,20 +1913,24 @@ def _choose_combat_patrol_target(
         if _unit_type_of(unit) is UnitType.VANGUARD
         else VIEW_RADIUS_RANGER
     )
-    distances = pathfinder.distances(unit.position)
-    scored = [
-        (
-            round(_sector_penalty(core_position, cell, sector), 3),
-            memory.visited_cells[cell],
-            -_scout_information_gain(cell, memory, radius),
-            distances[cell],
-            cell,
+    scored = []
+    for cell in frontier:
+        distance = pathfinder.distance_to(unit.position, cell)
+        if (
+            cell in claimed
+            or distance is None
+            or _distance(cell, core_position) > max_radius
+        ):
+            continue
+        scored.append(
+            (
+                round(_sector_penalty(core_position, cell, sector), 3),
+                memory.visited_cells[cell],
+                -_scout_information_gain(cell, memory, radius),
+                distance,
+                cell,
+            )
         )
-        for cell in frontier
-        if cell not in claimed
-        and cell in distances
-        and _distance(cell, core_position) <= max_radius
-    ]
     target = min(scored)[4] if scored else None
     fallback_radius = min(COMBAT_PATROL_RADIUS, max_radius)
     offset_x, offset_y = EXPLORATION_OFFSETS[sector]
@@ -2072,7 +2217,7 @@ def _control_workers(
     # ---- phase 2: global assignment of idle workers ----------------------
     reachable_nodes = (visible_resources | memory.resource_hints) - movement.enemy_cells
     resource_radius = _resource_radius(turn, memory, config)
-    memory.resource_radius_limit = resource_radius
+    assignment_radius = resource_radius
     candidates = {cell for cell in reachable_nodes if not danger.is_unsafe(cell)}
     if not candidates and assessment.posture == POSTURE_ECONOMY:
         # In economy posture, mildly contested nodes remain candidates; the
@@ -2092,8 +2237,32 @@ def _control_workers(
             pathfinder,
             memory,
             danger,
-            resource_radius,
+            assignment_radius,
         )
+        if assessment.posture == POSTURE_ECONOMY and len(assignment) < len(seekers):
+            expanded_radius = max(
+                assignment_radius or 0,
+                ECONOMY_MIN_RECOVERY_RADIUS,
+                config.adaptive_economy.max_resource_radius,
+            )
+            if expanded_radius > (assignment_radius or 0):
+                expanded_assignment, expanded_feasible = _assign_resources(
+                    seekers,
+                    candidates,
+                    claimed,
+                    visible_resources,
+                    core_position,
+                    pathfinder,
+                    memory,
+                    danger,
+                    expanded_radius,
+                )
+                if len(expanded_assignment) > len(assignment):
+                    assignment = expanded_assignment
+                feasible_cells |= expanded_feasible
+                assignment_radius = expanded_radius
+
+    memory.resource_radius_limit = assignment_radius
 
     active_resource_cells = claimed | set(assignment.values())
     memory.resource_candidate_count = len(feasible_cells | claimed)
@@ -2117,14 +2286,24 @@ def _control_workers(
         len(candidates),
         config,
     )
-    scout_budget = min(
-        scout_budget,
-        _worker_scout_limit(turn, memory, config),
-    )
+    if assessment.posture != POSTURE_ECONOMY:
+        scout_budget = min(
+            scout_budget,
+            _worker_scout_limit(turn, memory, config),
+        )
     exploration_radius = _exploration_radius(turn, memory, config)
+    resource_shortage = len(assignment) < len(seekers) and not storage_full
+    if resource_shortage and assessment.posture == POSTURE_ECONOMY:
+        scout_budget = idle_workers
+        exploration_radius = max(
+            exploration_radius,
+            ECONOMY_MIN_RECOVERY_RADIUS,
+            config.adaptive_economy.max_resource_radius,
+        )
     frontier: list[Position] = []
+    patrol_targets: set[Position] = set()
     if idle_workers > 0 and scout_budget > 0:
-        frontier = [
+        frontier_targets = [
             cell
             for cell in _frontier_targets(memory, pathfinder)
             if not danger.is_unsafe(cell)
@@ -2133,6 +2312,16 @@ def _control_workers(
                 or _distance(cell, core_position) <= exploration_radius
             )
         ]
+        if resource_shortage and core_position is not None:
+            patrol_targets = set(
+                _resource_chunk_patrol_targets(
+                    memory,
+                    pathfinder,
+                    core_position,
+                    exploration_radius,
+                )
+            )
+        frontier = sorted(set(frontier_targets) | patrol_targets)
         if assessment.safety_first and core_position is not None:
             frontier = [
                 cell
@@ -2195,6 +2384,7 @@ def _control_workers(
             core_position,
             sector,
             exploration_radius,
+            patrol_targets,
         )
 
         if scout_target is not None:
@@ -3180,6 +3370,7 @@ def choose_actions(
         # The loader caches by file timestamp, so this is a cheap hot-reload
         # check that makes dashboard saves effective on the next Turn.
         config = load_strategy_config()
+    memory.sync_economy_experiment(active_block_id())
     memory.observe(turn)
     if turn.core is None:
         memory.last_posture = "RESPAWNING"
@@ -3188,7 +3379,12 @@ def choose_actions(
 
     obstacles = set(turn.obstacle_cells) | memory.obstacle_cells
     enemy_cells = {enemy.position for enemy in turn.visible_enemies}
-    pathfinder = Pathfinder(obstacles, obstacles | enemy_cells, memory.bounds)
+    pathfinder = Pathfinder(
+        obstacles,
+        obstacles | enemy_cells,
+        memory.bounds,
+        memory.known_cells,
+    )
     danger = DangerMap(turn, memory)
     assessment = _assess_threat(turn, memory, danger, config)
     memory.last_posture = assessment.posture
@@ -3295,6 +3491,11 @@ def play(api_key: str) -> None:
             except OSError as error:
                 if DEBUG_TURNS:
                     print(f"state_save_failed={error}", flush=True)
+            try:
+                record_accepted_turn(turn, memory, config)
+            except (OSError, TypeError, ValueError, KeyError) as error:
+                if DEBUG_TURNS:
+                    print(f"economy_archive_save_failed={error}", flush=True)
             try:
                 write_dashboard_state(
                     turn,

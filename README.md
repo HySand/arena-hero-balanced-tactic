@@ -76,13 +76,17 @@ ARENA_HERO_API_KEY=你的_API_KEY
 
 控制台状态中的“有效半径 / 配置上限”表示本回合真正分配到的最远矿路程。例如 `6/10` 代表允许最多 10 格，但当前近矿已足够，最远只派到 6 格。无法可靠返航、绕墙后超出上限或完整循环过长的矿点会被跳过，空闲工人转为分区寻矿。
 
+地图记忆会保存在本地 `.arena_hero_state.json` 中：永久障碍、已探索格、访问次数和每格最后可见 Tick 会跨 Tick 保留。寻路只把已确认的空地作为中间路径，未知格只能作为分区探索的边界目标，因此不会把雾中的未知区域当成穿墙捷径。控制台阶段卡会显示已记录地图格数和障碍数。
+
+资源按官方 v0.11 规则处理：未采集点保持原位；自然资源点被成功采集后消失，服务端每 4 个已结算 Tick 在同一个 32x32 区块内用确定性随机的合法位置补足配额。因此策略记住“哪些区块产矿”和“哪里最久没有重新观察”，不会把已经耗尽的坐标永久当成矿点。规则原文见 [地图与视野](https://doc.arenahero.io/zh-Hans/rules/map-and-vision)。
+
 ## 默认策略
 
 仓库默认使用冻结的和平经济模型：`17 工人 / 1 先锋 / 1 游侠 = 19`，不进入人口维护费档位。默认关闭 Core 迁移和主动进攻，游侠留守 Core，空闲工人负责采矿与分区探索。
 
-默认经济参数来自 2026 年 8 月 3 日的 243 Tick 实战遥测，包含 26 个采集或存入结果，训练置信度为 `high`。基础侦察工人数为 12，动态加成上限为 2，资源搜索半径为 24-44。原始 `.arena_hero_state.json` 含本地游戏状态，已被 `.gitignore` 排除，不随仓库发布；可发布的训练摘要保存在 `strategy_config.json` 的 `extensions.peace_economy_training` 中。
+旧的 24-44 资源搜索半径模型来自 2026 年 8 月 3 日的 243 Tick 实战遥测，但它允许和平工人在 Core 附近等待，并把寻路限制在 45 格，因此已标记为 `invalidated`，不能再作为默认高置信度数据。当前发布候选半径为 96，状态为 `provisional`；当近距离半径不能覆盖所有空闲工人时，策略会在候选配置允许的完整半径内继续分配，其余工人优先回扫已产矿区块。原始 `.arena_hero_state.json` 含本地游戏状态，已被 `.gitignore` 排除，不随仓库发布；可发布的训练摘要保存在 `strategy_config.json` 的 `extensions` 中。
 
-本次发布冻结时已保留最近 256 Tick，包含 13 次采集和 13 次存入。最新 256 Tick 候选偶然选中只有 1 个样本的 15 名侦察组，置信度降为 `low`，因此没有覆盖已经实时验证的 `high` 默认模型。去除个人游戏状态后的完整对比摘要保存在 `peace_economy_training_snapshot.json`。
+旧训练快照和 v2 原始遥测仍保留用于审计，但不再覆盖或参与当前候选排名。新的 `peace-17-1-1-radius-v3` 实验会按交错区组比较 64、96、128 三个最大资源半径；只有利用率至少 0.75 且有足够采集/存入结果的候选才可能提升置信度。
 
 积累新的本地遥测后，可重新训练并应用参数：
 
@@ -91,6 +95,26 @@ ARENA_HERO_API_KEY=你的_API_KEY
 ```
 
 训练器默认拒绝用低置信度结果覆盖现有中高置信度模型。只有明确需要降级覆盖时才使用 `--force`。
+
+### 固定 17/1/1 的长期调参
+
+长期实验保存在 `peace_economy_17_1_1.json`。当前阶段用交错区组比较最大资源半径 `64/96/128`：每组先预热 24 Tick，至少测量 240 Tick，并重复三轮；只有 `17/1/1` 且处于 `ECONOMY` 姿态的样本进入排名。原始匿名遥测追加到被忽略的 `.peace_economy_telemetry.jsonl`，不会提交到 GitHub。
+
+开始或续跑长期实验：
+
+```powershell
+./run_peace_economy_experiment.cmd
+```
+
+查看进度、发布匿名汇总或停止并恢复发布模型：
+
+```powershell
+./.venv/Scripts/python.exe peace_economy_experiment.py status
+./.venv/Scripts/python.exe peace_economy_experiment.py publish
+./.venv/Scripts/python.exe peace_economy_experiment.py stop
+```
+
+实验结束不会自动用最后一组候选覆盖生产配置，而是恢复当前高置信度模型并在状态文件中给出候选排名；确认新的候选达到高置信度后，再单独提升为默认值。
 
 ## 项目结构
 
@@ -102,8 +126,12 @@ ARENA_HERO_API_KEY=你的_API_KEY
 - `dashboard_state.py`：写入不含凭据的实时状态快照。
 - `peace_economy_training.py`：从本地遥测训练和平经济默认参数。
 - `peace_economy_training_snapshot.json`：当前发布所用模型与最新冻结候选的匿名汇总。
+- `peace_economy_experiment.py`：固定 `17/1/1` 的长期区组调参与匿名遥测归档。
+- `peace_economy_17_1_1.json`：长期调参计划、候选范围和公开结果文件。
+- `run_peace_economy_experiment.cmd`：开始或续跑长期调参。
 - `test_balanced_tactic.py`：战术行为测试。
 - `test_strategy_config.py`：配置和控制台 API 测试。
+- `test_peace_economy_experiment.py`：长期调参和隐私归档测试。
 - `verify.cmd`：本地完整验收入口。
 - `.github/workflows/ci.yml`：GitHub Actions 自动测试。
 

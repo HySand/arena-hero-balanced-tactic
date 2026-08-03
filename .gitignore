@@ -12,6 +12,10 @@
 .arena_hero_state.json.tmp
 .arena_hero_dashboard_state.json
 .arena_hero_dashboard_state.json.tmp
+.peace_economy_telemetry.jsonl
+.peace_economy_telemetry.jsonl.lock
+.peace_economy_experiment_state.json
+.peace_economy_experiment_state.json.tmp
 strategy_config.json.tmp
 *.log
 *.har

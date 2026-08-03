@@ -36,7 +36,7 @@
     "adjustment_cooldown_ticks": 3,
     "radius_step": 8,
     "min_resource_radius": 24,
-    "max_resource_radius": 44,
+    "max_resource_radius": 96,
     "scarcity_ticks": 3,
     "long_cycle_ticks": 80,
     "low_throughput_per_worker": 0.0058,
@@ -99,7 +99,7 @@
       "tick_start": 42544,
       "tick_end": 43248,
       "score": 7.9279,
-      "confidence": "high",
+      "confidence": "invalidated",
       "max_economy_scouts": 12,
       "max_scout_bonus": 2,
       "window_ticks": 24,
@@ -118,7 +118,19 @@
       "selected_scout_samples": 140,
       "outcome_events": 26,
       "trained_at": "2026-08-03T03:42:59.065899+00:00",
-      "objective": "resource delivery, harvesting, discovery and utilization minus failures, overflow and idle worker time"
+      "objective": "resource delivery, harvesting, discovery and utilization minus failures, overflow and idle worker time",
+      "invalidated_at": "2026-08-03T05:30:20Z",
+      "invalidated_reason": "worker search was capped at 44 cells and idle peaceful workers were allowed to stage at the Core"
+    },
+    "peace_economy_radius_v3": {
+      "confidence": "provisional",
+      "max_resource_radius": 96,
+      "minimum_useful_utilization": 0.75,
+      "resource_chunk_patrol": true,
+      "stale_visibility_chunk_patrol": true,
+      "all_idle_workers_search_in_economy": true,
+      "full_candidate_radius_fallback": true,
+      "rules_basis": "Arena Hero v0.11: unharvested nodes stay put; consumed natural nodes are replaced every 4 settled ticks at deterministic random valid positions in the same 32x32 chunk"
     }
   }
 }

@@ -4,6 +4,7 @@ import tempfile
 import unittest
 from pathlib import Path
 from types import SimpleNamespace
+from unittest.mock import patch
 from uuid import UUID
 
 from arena_hero import APIError, BeaconStatus, CoreState, Direction, UnitType
@@ -14,11 +15,13 @@ from balanced_tactic import (
     PHASE_MID,
     POSTURE_ECONOMY,
     POSTURE_SURVIVAL,
+    Pathfinder,
     TacticMemory,
     _exploration_radius,
     _is_tick_mismatch,
     _offense_ready,
     _normalize_api_key,
+    _resource_chunk_patrol_targets,
     _resource_radius,
     _strategy_phase,
     _worker_scout_limit,
@@ -187,6 +190,13 @@ def moved_position(unit: FakeUnit) -> Position:
 
 
 class BalancedTacticTests(unittest.TestCase):
+    def setUp(self) -> None:
+        self.active_block_patch = patch(
+            "balanced_tactic.active_block_id", return_value=None
+        )
+        self.active_block_patch.start()
+        self.addCleanup(self.active_block_patch.stop)
+
     def test_only_tick_mismatch_is_treated_as_a_stale_submission(self) -> None:
         self.assertTrue(
             _is_tick_mismatch(APIError(status_code=409, error="TICK_MISMATCH"))
@@ -254,7 +264,22 @@ class BalancedTacticTests(unittest.TestCase):
             obstacle_cells={(1, 0)},
         )
         choose_actions(turn)
-        self.assertEqual(worker.action, ("MOVE", Direction.UP))
+        self.assertIn(
+            worker.action,
+            {("MOVE", Direction.UP), ("MOVE", Direction.DOWN)},
+        )
+
+    def test_pathfinder_does_not_cross_unknown_cells_as_shortcut(self) -> None:
+        known = {(0, 0), (0, -1), (1, -1), (2, -1), (2, 0)}
+        pathfinder = Pathfinder(set(), set(), (-2, -2, 4, 4), known)
+        self.assertEqual(pathfinder.distance_to((0, 0), (2, 0)), 4)
+        self.assertEqual(pathfinder.first_step((0, 0), (2, 0)), Direction.UP)
+
+    def test_pathfinder_allows_unknown_frontier_as_terminal_goal(self) -> None:
+        pathfinder = Pathfinder(set(), set(), (-2, -2, 4, 4), {(0, 0), (1, 0)})
+        self.assertEqual(pathfinder.distance_to((0, 0), (2, 0)), 2)
+        self.assertEqual(pathfinder.first_step((0, 0), (2, 0)), Direction.RIGHT)
+        self.assertEqual(pathfinder.first_step((1, 0), (2, 0)), Direction.RIGHT)
 
     def test_resource_radius_uses_real_route_around_obstacles(self) -> None:
         worker = FakeUnit(1, (0, 0), UnitType.WORKER)
@@ -288,7 +313,11 @@ class BalancedTacticTests(unittest.TestCase):
 
     def test_effective_resource_radius_tracks_actual_assignments(self) -> None:
         worker = FakeUnit(1, (0, 0), UnitType.WORKER)
-        memory = TacticMemory(first_tick=1, last_tick=1)
+        memory = TacticMemory(
+            first_tick=1,
+            last_tick=1,
+            known_cells={(x, 0) for x in range(9)},
+        )
         config = strategy_config_from_dict(default_config_dict())
         turn = FakeTurn(
             tick=1,
@@ -343,10 +372,12 @@ class BalancedTacticTests(unittest.TestCase):
             scout_targets={uid(1): (4, 5)},
             scout_target_started={uid(1): 12},
             worker_sectors={uid(1): 3},
+            resource_chunks={(2, -1)},
             combat_targets={uid(2): (8, 9)},
             combat_target_started={uid(2): 11},
             combat_sectors={uid(2): 6},
             visited_cells={(0, 0): 3},
+            cell_last_seen={(0, 0): 11, (1, 0): 13},
             enemy_sightings={(9, 9): 12},
             peak_hp={uid(1): 2},
             peak_hp_by_type={UnitType.WORKER: 2},
@@ -362,12 +393,14 @@ class BalancedTacticTests(unittest.TestCase):
         self.assertEqual(restored.scout_targets, memory.scout_targets)
         self.assertEqual(restored.scout_target_started, memory.scout_target_started)
         self.assertEqual(restored.worker_sectors, memory.worker_sectors)
+        self.assertEqual(restored.resource_chunks, {(2, -1)})
         self.assertEqual(restored.combat_targets, memory.combat_targets)
         self.assertEqual(
             restored.combat_target_started, memory.combat_target_started
         )
         self.assertEqual(restored.combat_sectors, memory.combat_sectors)
         self.assertEqual(restored.visited_cells[(0, 0)], 3)
+        self.assertEqual(restored.cell_last_seen, memory.cell_last_seen)
         self.assertEqual(restored.enemy_sightings, memory.enemy_sightings)
         self.assertEqual(restored.peak_hp, memory.peak_hp)
         self.assertEqual(restored.peak_hp_by_type, memory.peak_hp_by_type)
@@ -491,12 +524,109 @@ class BalancedTacticTests(unittest.TestCase):
         memory = TacticMemory()
         config = strategy_config_from_dict(default_config_dict())
         choose_actions(FakeTurn(units=workers, resources=0), memory, config)
-        self.assertEqual(len(memory.scout_targets), 1)
+        self.assertEqual(len(memory.scout_targets), 4)
         scout_ids = set(memory.scout_targets)
         self.assertEqual(
             len({memory.worker_sectors[worker_id] for worker_id in scout_ids}),
-            1,
+            4,
         )
+
+    def test_scarcity_assigns_a_remembered_resource_beyond_old_radius(self) -> None:
+        worker = FakeUnit(1, (0, 0), UnitType.WORKER)
+        memory = TacticMemory(
+            known_cells={(x, 0) for x in range(55)},
+            resource_hints={(54, 0)},
+            first_tick=1,
+            last_tick=10,
+        )
+        document = default_config_dict()
+        document["pacing"]["enabled"] = False
+        document["adaptive_economy"]["max_resource_radius"] = 44
+        config = strategy_config_from_dict(document)
+
+        choose_actions(FakeTurn(tick=11, units=[worker]), memory, config)
+
+        self.assertEqual(memory.worker_targets[worker.id], (54, 0))
+        self.assertGreaterEqual(memory.resource_radius_limit or 0, 64)
+
+    def test_scarcity_patrols_a_known_resource_chunk(self) -> None:
+        workers = [
+            FakeUnit(index, (0, 0), UnitType.WORKER)
+            for index in range(1, 5)
+        ]
+        memory = TacticMemory(
+            known_cells={(x, y) for x in range(16) for y in range(16)},
+            resource_chunks={(0, 0)},
+            first_tick=1,
+            last_tick=10,
+        )
+        choose_actions(FakeTurn(tick=11, units=workers), memory)
+
+        self.assertEqual(len(memory.scout_targets), 4)
+        self.assertTrue(
+            all(_target[0] < 32 and _target[1] < 32 for _target in memory.scout_targets.values())
+        )
+
+    def test_resource_chunk_patrol_prefers_stale_visibility(self) -> None:
+        cells = {(x, 0) for x in range(32)}
+        memory = TacticMemory(
+            known_cells=cells,
+            resource_chunks={(0, 0)},
+            cell_last_seen={cell: 100 for cell in cells},
+        )
+        memory.cell_last_seen[(4, 0)] = 10
+        pathfinder = Pathfinder(set(), set(), None, cells)
+
+        targets = _resource_chunk_patrol_targets(memory, pathfinder, (0, 0), 64)
+
+        self.assertIn((4, 0), targets)
+
+    def test_partial_resource_supply_sends_other_workers_to_chunk_patrol(self) -> None:
+        workers = [
+            FakeUnit(index, (0, 0), UnitType.WORKER)
+            for index in range(1, 5)
+        ]
+        memory = TacticMemory(
+            known_cells={(x, y) for x in range(16) for y in range(16)},
+            resource_chunks={(0, 0)},
+            first_tick=1,
+            last_tick=10,
+        )
+
+        choose_actions(
+            FakeTurn(tick=11, units=workers, resource_cells={(8, 8)}),
+            memory,
+        )
+
+        self.assertEqual(len(memory.worker_targets), 1)
+        self.assertEqual(len(memory.scout_targets), 3)
+
+    def test_quiet_economy_expands_assignment_when_adaptive_radius_is_tight(self) -> None:
+        workers = [
+            FakeUnit(1, (0, 0), UnitType.WORKER),
+            FakeUnit(2, (0, 1), UnitType.WORKER),
+        ]
+        memory = TacticMemory(
+            known_cells={(x, 0) for x in range(55)} | {(0, 1)},
+            resource_hints={(4, 0), (54, 0)},
+            adaptive_radius_delta=-64,
+            first_tick=1,
+            last_tick=10,
+        )
+        document = default_config_dict()
+        document["pacing"]["enabled"] = False
+        document["adaptive_economy"]["max_resource_radius"] = 96
+        config = strategy_config_from_dict(document)
+
+        choose_actions(
+            FakeTurn(tick=11, units=workers, resource_cells={(4, 0)}),
+            memory,
+            config,
+        )
+
+        self.assertEqual(set(memory.worker_targets.values()), {(4, 0), (54, 0)})
+        self.assertEqual(memory.resource_candidate_count, 2)
+        self.assertEqual(memory.resource_radius_limit, 96)
 
     def test_early_phase_keeps_workers_on_nearby_resources(self) -> None:
         worker = FakeUnit(1, (0, 0), UnitType.WORKER)
@@ -518,7 +648,11 @@ class BalancedTacticTests(unittest.TestCase):
             FakeUnit(index + 1, (0, index), UnitType.WORKER)
             for index in range(6)
         ]
-        memory = TacticMemory(first_tick=1, last_tick=80)
+        memory = TacticMemory(
+            first_tick=1,
+            last_tick=80,
+            known_cells={(x, 0) for x in range(16)},
+        )
         config = strategy_config_from_dict(default_config_dict())
         turn = FakeTurn(
             tick=100,
@@ -909,7 +1043,7 @@ class BalancedTacticTests(unittest.TestCase):
         self.assertEqual(memory.adaptive_action, "EXPAND_SEARCH")
         self.assertEqual(memory.adaptive_reason, "resource_scarcity")
         self.assertEqual(memory.adaptive_radius_delta, 2)
-        self.assertEqual(memory.resource_radius_limit, 12)
+        self.assertEqual(memory.resource_radius_limit, 64)
         self.assertEqual(memory.adaptive_scout_bonus, 1)
 
     def test_full_storage_reduces_radius_and_worker_target(self) -> None:
@@ -953,6 +1087,7 @@ class BalancedTacticTests(unittest.TestCase):
             economy_history=[{"tick": 7, "workers": 4, "deposited": 1}],
             worker_cycle_started={uid(1): 3},
             cycle_durations=[5, 7],
+            bounds=(-10, -20, 30, 40),
             adaptive_radius_delta=4,
             adaptive_scout_bonus=2,
             adaptive_worker_target=7,
@@ -962,6 +1097,7 @@ class BalancedTacticTests(unittest.TestCase):
             adaptive_reason="resource_scarcity",
             adaptive_throughput=0.125,
             adaptive_sample_count=8,
+            economy_experiment_block_id="block-a",
         )
         with tempfile.TemporaryDirectory() as directory:
             state_path = Path(directory) / "state.json"
@@ -970,9 +1106,68 @@ class BalancedTacticTests(unittest.TestCase):
         self.assertEqual(restored.economy_history, memory.economy_history)
         self.assertEqual(restored.worker_cycle_started, memory.worker_cycle_started)
         self.assertEqual(restored.cycle_durations, [5, 7])
+        self.assertEqual(restored.bounds, memory.bounds)
         self.assertEqual(restored.adaptive_radius_delta, 4)
         self.assertEqual(restored.adaptive_worker_target, 7)
         self.assertEqual(restored.adaptive_action, "EXPAND_SEARCH")
+        self.assertEqual(restored.economy_experiment_block_id, "block-a")
+
+    def test_experiment_block_change_resets_learning_but_preserves_map(self) -> None:
+        memory = TacticMemory(
+            known_cells={(90, 90)},
+            obstacle_cells={(91, 90)},
+            visited_cells={(90, 90): 4},
+            scout_targets={uid(1): (92, 90)},
+            economy_history=[{"tick": 7, "workers": 17, "deposited": 2}],
+            worker_cycle_started={uid(1): 3},
+            cycle_durations=[50, 70],
+            adaptive_radius_delta=-12,
+            adaptive_scout_bonus=2,
+            adaptive_worker_target=17,
+            adaptive_worker_base_target=17,
+            adaptive_last_adjust_tick=7,
+            adaptive_action="CONSERVE",
+            adaptive_reason="long_cycle",
+            adaptive_throughput=0.2,
+            adaptive_utilization=0.8,
+            adaptive_failure_rate=0.1,
+            adaptive_average_cycle_ticks=60.0,
+            adaptive_storage_full_ratio=0.3,
+            adaptive_new_cells_per_scout=1.5,
+            adaptive_sample_count=24,
+            adaptive_scarcity_streak=5,
+            economy_experiment_block_id="block-a",
+        )
+        self.assertTrue(memory.sync_economy_experiment("block-b"))
+        self.assertEqual(memory.economy_experiment_block_id, "block-b")
+        self.assertEqual(memory.economy_history, [])
+        self.assertEqual(memory.worker_cycle_started, {})
+        self.assertEqual(memory.cycle_durations, [])
+        self.assertEqual(memory.adaptive_radius_delta, 0)
+        self.assertEqual(memory.adaptive_scout_bonus, 0)
+        self.assertIsNone(memory.adaptive_worker_target)
+        self.assertEqual(memory.adaptive_action, "WARMUP")
+        self.assertEqual(memory.adaptive_sample_count, 0)
+        self.assertEqual(memory.known_cells, {(90, 90)})
+        self.assertEqual(memory.obstacle_cells, {(91, 90)})
+        self.assertEqual(memory.visited_cells[(90, 90)], 4)
+        self.assertEqual(memory.scout_targets, {uid(1): (92, 90)})
+
+    def test_choose_actions_syncs_the_active_experiment_before_observing(self) -> None:
+        worker = FakeUnit(1, (0, 0), UnitType.WORKER)
+        memory = TacticMemory(
+            last_tick=9,
+            economy_history=[{"tick": 8, "workers": 17, "deposited": 3}],
+            adaptive_radius_delta=-12,
+            adaptive_scout_bonus=2,
+            economy_experiment_block_id="block-a",
+        )
+        with patch("balanced_tactic.active_block_id", return_value="block-b"):
+            choose_actions(FakeTurn(tick=10, units=[worker]), memory)
+        self.assertEqual(memory.economy_experiment_block_id, "block-b")
+        self.assertEqual([sample["tick"] for sample in memory.economy_history], [10])
+        self.assertEqual(memory.adaptive_radius_delta, 0)
+        self.assertEqual(memory.adaptive_scout_bonus, 0)
 
 if __name__ == "__main__":
     unittest.main()
