@@ -80,9 +80,9 @@ ARENA_HERO_API_KEY=你的_API_KEY
 
 仓库默认使用冻结的和平经济模型：`17 工人 / 1 先锋 / 1 游侠 = 19`，不进入人口维护费档位。默认关闭 Core 迁移和主动进攻，游侠留守 Core，空闲工人负责采矿与分区探索。
 
-默认经济参数来自 2026 年 8 月 3 日的 150 Tick 实战遥测，包含 8 次采集和 8 次存入结果，训练置信度为 `medium`。基础侦察工人数为 14，动态加成上限为 2，资源搜索半径为 24-44。原始 `.arena_hero_state.json` 含本地游戏状态，已被 `.gitignore` 排除，不随仓库发布；可发布的训练摘要保存在 `strategy_config.json` 的 `extensions.peace_economy_training` 中。
+默认经济参数来自 2026 年 8 月 3 日的 243 Tick 实战遥测，包含 26 个采集或存入结果，训练置信度为 `high`。基础侦察工人数为 12，动态加成上限为 2，资源搜索半径为 24-44。原始 `.arena_hero_state.json` 含本地游戏状态，已被 `.gitignore` 排除，不随仓库发布；可发布的训练摘要保存在 `strategy_config.json` 的 `extensions.peace_economy_training` 中。
 
-本次发布冻结时已积累 166 Tick、9 次采集和 8 次存入。最新 166 Tick 候选的置信度降为 `low`，因此没有覆盖已验证的 `medium` 默认模型。去除个人游戏状态后的完整对比摘要保存在 `peace_economy_training_snapshot.json`。
+本次发布冻结时已保留最近 256 Tick，包含 13 次采集和 13 次存入。最新 256 Tick 候选偶然选中只有 1 个样本的 15 名侦察组，置信度降为 `low`，因此没有覆盖已经实时验证的 `high` 默认模型。去除个人游戏状态后的完整对比摘要保存在 `peace_economy_training_snapshot.json`。
 
 积累新的本地遥测后，可重新训练并应用参数：
 

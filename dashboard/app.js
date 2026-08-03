@@ -100,7 +100,7 @@ const PRODUCTION_STYLES = {
 };
 
 const PEACE_ECONOMY_FALLBACK = {
-  max_economy_scouts: 14,
+  max_economy_scouts: 12,
   max_scout_bonus: 2,
   window_ticks: 24,
   warmup_ticks: 12,
@@ -109,9 +109,9 @@ const PEACE_ECONOMY_FALLBACK = {
   min_resource_radius: 24,
   max_resource_radius: 44,
   scarcity_ticks: 3,
-  long_cycle_ticks: 74,
-  low_throughput_per_worker: 0.0063,
-  healthy_throughput_per_worker: 0.0251,
+  long_cycle_ticks: 80,
+  low_throughput_per_worker: 0.0058,
+  healthy_throughput_per_worker: 0.0232,
   max_harvest_failure_rate: 0.15,
   storage_full_ratio: 0.4,
   worker_target: 17,
