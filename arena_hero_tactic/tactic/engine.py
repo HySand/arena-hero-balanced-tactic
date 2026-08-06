@@ -4494,8 +4494,11 @@ def _print_turn_debug(
     )
 
 
-def _is_tick_mismatch(error: APIError) -> bool:
-    return error.status_code == 409 and error.error == "TICK_MISMATCH"
+def _is_stale_submission(error: APIError) -> bool:
+    return error.status_code == 409 and error.error in {
+        "COMMAND_WINDOW_CLOSED",
+        "TICK_MISMATCH",
+    }
 
 
 def _version_check_paths() -> tuple[Path, Path]:
@@ -4557,10 +4560,10 @@ def _play_locked(api_key: str) -> None:
             try:
                 accepted = turn.submit()
             except APIError as error:
-                if _is_tick_mismatch(error):
+                if _is_stale_submission(error):
                     if DEBUG_TURNS:
                         print(
-                            f"tick={turn.tick} skipped=TICK_MISMATCH",
+                            f"tick={turn.tick} skipped={error.error}",
                             flush=True,
                         )
                     continue

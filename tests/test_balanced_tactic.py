@@ -19,7 +19,7 @@ from arena_hero_tactic.tactic.engine import (
     Pathfinder,
     TacticMemory,
     _exploration_radius,
-    _is_tick_mismatch,
+    _is_stale_submission,
     _offense_ready,
     _normalize_api_key,
     _neighbors,
@@ -262,12 +262,21 @@ class BalancedTacticTests(unittest.TestCase):
             ((5, 4), (6, 5), (5, 6), (4, 5)),
         )
 
-    def test_only_tick_mismatch_is_treated_as_a_stale_submission(self) -> None:
-        self.assertTrue(
-            _is_tick_mismatch(APIError(status_code=409, error="TICK_MISMATCH"))
+    def test_closed_or_mismatched_tick_is_treated_as_a_stale_submission(self) -> None:
+        for error_code in ("COMMAND_WINDOW_CLOSED", "TICK_MISMATCH"):
+            with self.subTest(error_code=error_code):
+                self.assertTrue(
+                    _is_stale_submission(
+                        APIError(status_code=409, error=error_code)
+                    )
+                )
+        self.assertFalse(
+            _is_stale_submission(APIError(status_code=409, error="OTHER_CONFLICT"))
         )
         self.assertFalse(
-            _is_tick_mismatch(APIError(status_code=409, error="OTHER_CONFLICT"))
+            _is_stale_submission(
+                APIError(status_code=422, error="COMMAND_WINDOW_CLOSED")
+            )
         )
 
     def test_api_key_copy_artifacts_are_removed(self) -> None:
