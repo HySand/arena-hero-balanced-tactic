@@ -628,6 +628,54 @@ class BalancedTacticTests(unittest.TestCase):
             4,
         )
 
+    def test_prolonged_scarcity_sends_workers_to_distinct_outer_frontier(self) -> None:
+        workers = [
+            FakeUnit(index, (0, 0), UnitType.WORKER)
+            for index in range(1, 13)
+        ]
+        known_cells = {
+            (x, y)
+            for x in range(-70, 71)
+            for y in range(-70, 71)
+            if abs(x) + abs(y) <= 70
+        }
+        known_cells.remove((12, 0))
+        memory = TacticMemory(
+            known_cells=known_cells,
+            obstacle_cells={(70, 0)},
+            scout_targets={workers[0].id: (4, 0)},
+            scout_target_started={workers[0].id: 90},
+            first_tick=1,
+            last_tick=100,
+            resource_candidate_count=1,
+            economy_history=[
+                {
+                    "tick": tick,
+                    "workers": 12,
+                    "deposited": 0,
+                    "busy": 12,
+                    "candidates": 1,
+                    "storage_full": 0,
+                    "scouts": 12,
+                    "new_cells": 0,
+                }
+                for tick in range(89, 101)
+            ],
+        )
+        config = strategy_config_from_dict(default_config_dict())
+
+        choose_actions(
+            FakeTurn(tick=101, units=workers, resources=0),
+            memory,
+            config,
+        )
+
+        targets = list(memory.scout_targets.values())
+        self.assertEqual(len(targets), len(workers))
+        self.assertEqual(len(set(targets)), len(workers))
+        self.assertTrue(all(abs(x) + abs(y) > 64 for x, y in targets))
+        self.assertNotEqual(memory.scout_targets[workers[0].id], (4, 0))
+
     def test_scarcity_assigns_a_remembered_resource_beyond_old_radius(self) -> None:
         worker = FakeUnit(1, (0, 0), UnitType.WORKER)
         memory = TacticMemory(
@@ -1444,6 +1492,83 @@ class BalancedTacticTests(unittest.TestCase):
         self.assertEqual(memory.adaptive_radius_delta, 2)
         self.assertEqual(memory.resource_radius_limit, 96)
         self.assertEqual(memory.adaptive_scout_bonus, 1)
+
+    def test_one_candidate_does_not_hide_scarcity_from_a_large_workforce(self) -> None:
+        config = strategy_config_from_dict(default_config_dict())
+        workers = [
+            FakeUnit(index, (0, 0), UnitType.WORKER)
+            for index in range(1, 13)
+        ]
+        memory = TacticMemory(
+            first_tick=1,
+            last_tick=8,
+            resource_candidate_count=1,
+            economy_history=[
+                {
+                    "tick": tick,
+                    "workers": 12,
+                    "deposited": 0,
+                    "busy": 12,
+                    "candidates": 1,
+                    "storage_full": 0,
+                    "scouts": 11,
+                    "new_cells": 1,
+                }
+                for tick in range(1, 9)
+            ],
+        )
+
+        choose_actions(
+            FakeTurn(tick=9, units=workers, resources=0),
+            memory,
+            config,
+        )
+
+        self.assertEqual(memory.adaptive_action, "EXPAND_SEARCH")
+        self.assertGreaterEqual(
+            memory.adaptive_scarcity_streak,
+            config.adaptive_economy.scarcity_ticks,
+        )
+        self.assertGreater(_exploration_radius(FakeTurn(), memory, config), 64)
+
+    def test_sufficient_candidates_end_the_scarcity_expedition(self) -> None:
+        config = strategy_config_from_dict(default_config_dict())
+        workers = [
+            FakeUnit(index, (0, 0), UnitType.WORKER)
+            for index in range(1, 13)
+        ]
+        memory = TacticMemory(
+            first_tick=1,
+            last_tick=12,
+            resource_candidate_count=6,
+            resource_assignment_count=6,
+            adaptive_scarcity_streak=12,
+            economy_history=[
+                {
+                    "tick": tick,
+                    "workers": 12,
+                    "deposited": 0,
+                    "busy": 12,
+                    "candidates": 1,
+                    "storage_full": 0,
+                    "scouts": 11,
+                    "new_cells": 1,
+                }
+                for tick in range(1, 13)
+            ],
+        )
+        previous_radius = _exploration_radius(
+            FakeTurn(tick=12, units=workers),
+            memory,
+            config,
+        )
+        turn = FakeTurn(tick=13, units=workers, resources=0)
+
+        choose_actions(turn, memory, config)
+
+        self.assertGreater(previous_radius, 64)
+        self.assertEqual(memory.adaptive_scarcity_streak, 0)
+        self.assertLess(_exploration_radius(turn, memory, config), previous_radius)
 
     def test_full_storage_reduces_radius_and_worker_target(self) -> None:
         config = strategy_config_from_dict(default_config_dict())

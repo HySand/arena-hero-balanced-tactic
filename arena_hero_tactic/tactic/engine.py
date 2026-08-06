@@ -186,6 +186,8 @@ VIEW_RADIUS_CORE = 5
 VIEW_RADIUS_WORKER = 3
 VIEW_RADIUS_VANGUARD = 4
 VIEW_RADIUS_RANGER = 5
+SCARCITY_EXPEDITION_MIN_STEP = 8
+SCARCITY_EXPEDITION_LOW_GAIN = 1.0
 
 # The server contract can change independently of the local tactic process.
 # Keep the check outside Turn planning and fail closed for unattended runners.
@@ -2580,12 +2582,19 @@ def _choose_scout_target(
     sector: int,
     max_radius: int = EXPLORATION_RADIUS,
     priority_targets: set[Position] | None = None,
+    prefer_outer_frontier: bool = False,
 ) -> Position | None:
     """Keep one safe, sector-aligned waypoint until reached or invalidated."""
+    priority = priority_targets or set()
     existing = memory.scout_targets.get(worker.id)
     started = memory.scout_target_started.get(worker.id, tick)
     if (
         existing is not None
+        and (
+            not prefer_outer_frontier
+            or not priority
+            or existing in priority
+        )
         and existing not in claimed
         and existing not in memory.obstacle_cells
         and not danger.is_unsafe(existing)
@@ -2600,7 +2609,6 @@ def _choose_scout_target(
 
     _clear_scout_target(memory, worker.id)
     scored = []
-    priority = priority_targets or set()
     for cell in frontier:
         distance = pathfinder.distance_to(worker.position, cell)
         if (
@@ -2610,18 +2618,32 @@ def _choose_scout_target(
             or _distance(cell, core_position) > max_radius
         ):
             continue
-        scored.append(
-            (
-                round(danger.score(cell), 3),
-                0 if cell in priority else 1,
-                round(_sector_penalty(core_position, cell, sector), 3),
-                memory.visited_cells[cell],
-                -_scout_information_gain(cell, memory),
-                distance,
-                cell,
+        if prefer_outer_frontier:
+            scored.append(
+                (
+                    round(danger.score(cell), 3),
+                    0 if cell in priority else 1,
+                    -_distance(cell, core_position),
+                    round(_sector_penalty(core_position, cell, sector), 3),
+                    memory.visited_cells[cell],
+                    -_scout_information_gain(cell, memory),
+                    distance,
+                    cell,
+                )
             )
-        )
-    target = min(scored)[6] if scored else None
+        else:
+            scored.append(
+                (
+                    round(danger.score(cell), 3),
+                    0 if cell in priority else 1,
+                    round(_sector_penalty(core_position, cell, sector), 3),
+                    memory.visited_cells[cell],
+                    -_scout_information_gain(cell, memory),
+                    distance,
+                    cell,
+                )
+            )
+    target = min(scored)[-1] if scored else None
     fallback = _sector_waypoint(core_position, sector, max_radius)
     if (
         target is None
@@ -3096,6 +3118,13 @@ def _control_workers(
         )
     exploration_radius = _exploration_radius(turn, memory, config)
     resource_shortage = len(assignment) < len(seekers) and not storage_full
+    scarcity_expedition = (
+        resource_shortage
+        and assessment.posture == POSTURE_ECONOMY
+        and config.adaptive_economy.enabled
+        and memory.adaptive_scarcity_streak
+        >= config.adaptive_economy.scarcity_ticks
+    )
     if (resource_shortage or storage_full) and assessment.posture == POSTURE_ECONOMY:
         scout_budget = idle_workers
         exploration_radius = max(
@@ -3104,6 +3133,7 @@ def _control_workers(
             config.adaptive_economy.max_resource_radius,
         )
     frontier: list[Position] = []
+    frontier_targets: list[Position] = []
     patrol_targets: set[Position] = set()
     if idle_workers > 0 and scout_budget > 0:
         frontier_targets = [
@@ -3148,6 +3178,8 @@ def _control_workers(
                 if _distance(cell, core_position)
                 <= config.workers.safe_scout_radius
             }
+    outer_frontier = set(frontier_targets) if scarcity_expedition else set()
+    preferred_targets = outer_frontier or patrol_targets
     claimed_frontier: set[Position] = set(assignment.values()) | claimed
     claimed_sectors: set[int] = set()
     scouts_sent = 0
@@ -3191,7 +3223,8 @@ def _control_workers(
             core_position,
             sector,
             exploration_radius,
-            patrol_targets,
+            preferred_targets,
+            bool(outer_frontier),
         )
 
         if scout_target is not None:
@@ -3384,7 +3417,13 @@ def _update_adaptive_economy(
 
     scarcity_streak = 0
     for sample in reversed(samples):
-        if sample.get("storage_full", 0) or sample.get("candidates", 0) > 0:
+        workers = max(0, sample.get("workers", 0))
+        required_candidates = max(1, (workers + 1) // 2)
+        if (
+            workers <= 0
+            or sample.get("storage_full", 0)
+            or sample.get("candidates", 0) >= required_candidates
+        ):
             break
         scarcity_streak += 1
     memory.adaptive_scarcity_streak = scarcity_streak
@@ -3544,6 +3583,23 @@ def _exploration_radius(
         )
     if config.adaptive_economy.enabled:
         base_radius += max(0, memory.adaptive_radius_delta)
+        adaptive = config.adaptive_economy
+        expedition_level = max(
+            0,
+            memory.adaptive_scarcity_streak - adaptive.scarcity_ticks + 1,
+        )
+        if expedition_level:
+            expedition_step = max(
+                SCARCITY_EXPEDITION_MIN_STEP,
+                adaptive.radius_step,
+            )
+            if memory.adaptive_new_cells_per_scout < SCARCITY_EXPEDITION_LOW_GAIN:
+                expedition_step += VIEW_RADIUS_WORKER
+            expanded_radius = min(
+                PATH_MAX_DISTANCE,
+                base_radius + expedition_level * expedition_step,
+            )
+            base_radius = max(base_radius, expanded_radius)
     return min(500, base_radius)
 
 
