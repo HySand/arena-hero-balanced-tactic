@@ -9,7 +9,8 @@ from uuid import UUID
 
 from arena_hero import APIError, BeaconStatus, CoreState, Direction, UnitType
 
-from balanced_tactic import (
+from arena_hero_tactic.tactic.engine import (
+    EnemyTrack,
     PHASE_EARLY,
     PHASE_LATE,
     PHASE_MID,
@@ -21,13 +22,15 @@ from balanced_tactic import (
     _is_tick_mismatch,
     _offense_ready,
     _normalize_api_key,
+    _neighbors,
     _resource_chunk_patrol_targets,
     _resource_radius,
+    _stale_visibility_patrol_targets,
     _strategy_phase,
     _worker_scout_limit,
     choose_actions,
 )
-from strategy_config import default_config_dict, strategy_config_from_dict
+from arena_hero_tactic.configuration.strategy import default_config_dict, strategy_config_from_dict
 
 
 Position = tuple[int, int]
@@ -46,13 +49,17 @@ class FakeUnit:
         unit_type: UnitType,
         *,
         cargo: int = 0,
-        hp: int = 2,
+        hp: int | None = None,
     ) -> None:
         self.id = uid(number)
         self.position = position
         self.unit_type = unit_type
         self.cargo = cargo
-        self.hp = hp
+        self.hp = hp if hp is not None else {
+            UnitType.WORKER: 2,
+            UnitType.VANGUARD: 4,
+            UnitType.RANGER: 2,
+        }[unit_type]
         self.action = None
 
     def move(self, direction: Direction) -> None:
@@ -70,6 +77,15 @@ class FakeUnit:
     def shoot(self, target: object) -> None:
         self.action = ("SHOOT", target.id)
 
+    def shoot_cell(self, position: Position) -> None:
+        self.action = ("SHOOT_CELL", position)
+
+    def heal(self) -> None:
+        self.action = ("HEAL",)
+
+    def self_destruct(self) -> None:
+        self.action = ("SELF_DESTRUCT",)
+
     def pickup_beacon(self) -> None:
         self.action = ("PICKUP_BEACON",)
 
@@ -80,12 +96,13 @@ class FakeCore:
         position: Position = (0, 0),
         *,
         shield: int = 5,
+        hp: int = 5,
         state: CoreState = CoreState.NORMAL,
         owner_username: str = "test-player",
     ) -> None:
         self.id = uid(10_000)
         self.position = position
-        self.hp = 5
+        self.hp = hp
         self.shield = shield
         self.owner_username = owner_username
         self.view = SimpleNamespace(state=state)
@@ -96,6 +113,9 @@ class FakeCore:
 
     def repair_shield(self) -> None:
         self.action = ("REPAIR_SHIELD",)
+
+    def heal(self) -> None:
+        self.action = ("HEAL",)
 
     def pickup_beacon(self) -> None:
         self.action = ("PICKUP_BEACON",)
@@ -161,6 +181,39 @@ def enemy(
         shield=5 if core else 0,
     )
 
+def missing_enemy_memory(
+    tracker: FakeUnit,
+    position: Position,
+    previous_position: Position,
+) -> tuple[UUID, TacticMemory]:
+    enemy_id = uid(101)
+    known = {
+        (x, y)
+        for x in range(position[0] - 4, position[0] + 5)
+        for y in range(position[1] - 4, position[1] + 5)
+        if abs(x - position[0]) + abs(y - position[1]) <= 4
+    }
+    return enemy_id, TacticMemory(
+        known_cells=known,
+        cell_last_seen={cell: 1 for cell in known},
+        enemy_tracks={
+            enemy_id: EnemyTrack(
+                position=position,
+                previous_position=previous_position,
+                first_seen_tick=1,
+                last_seen_tick=1,
+                missing_since_tick=2,
+                kind="UNIT",
+                unit_type=UnitType.VANGUARD,
+                hp=4,
+            )
+        },
+        tracker_assignments={tracker.id: enemy_id},
+        first_tick=1,
+        last_tick=2,
+    )
+
+
 def arena_event(
     event_type: str,
     *,
@@ -192,10 +245,16 @@ def moved_position(unit: FakeUnit) -> Position:
 class BalancedTacticTests(unittest.TestCase):
     def setUp(self) -> None:
         self.active_block_patch = patch(
-            "balanced_tactic.active_block_id", return_value=None
+            "arena_hero_tactic.tactic.engine.active_block_id", return_value=None
         )
         self.active_block_patch.start()
         self.addCleanup(self.active_block_patch.stop)
+
+    def test_neighbors_follow_direction_order(self) -> None:
+        self.assertEqual(
+            _neighbors((5, 5)),
+            ((5, 4), (6, 5), (5, 6), (4, 5)),
+        )
 
     def test_only_tick_mismatch_is_treated_as_a_stale_submission(self) -> None:
         self.assertTrue(
@@ -376,9 +435,24 @@ class BalancedTacticTests(unittest.TestCase):
             combat_targets={uid(2): (8, 9)},
             combat_target_started={uid(2): 11},
             combat_sectors={uid(2): 6},
+            guard_targets={uid(3): (0, -6)},
+            guard_sectors={uid(3): 0},
             visited_cells={(0, 0): 3},
             cell_last_seen={(0, 0): 11, (1, 0): 13},
             enemy_sightings={(9, 9): 12},
+            enemy_tracks={
+                uid(101): EnemyTrack(
+                    position=(9, 9),
+                    previous_position=(8, 9),
+                    first_seen_tick=10,
+                    last_seen_tick=12,
+                    missing_since_tick=13,
+                    kind="UNIT",
+                    unit_type=UnitType.RANGER,
+                    hp=2,
+                )
+            },
+            tracker_assignments={uid(2): uid(101)},
             peak_hp={uid(1): 2},
             peak_hp_by_type={UnitType.WORKER: 2},
             fleeing_worker_ticks=4,
@@ -399,9 +473,13 @@ class BalancedTacticTests(unittest.TestCase):
             restored.combat_target_started, memory.combat_target_started
         )
         self.assertEqual(restored.combat_sectors, memory.combat_sectors)
+        self.assertEqual(restored.guard_targets, memory.guard_targets)
+        self.assertEqual(restored.guard_sectors, memory.guard_sectors)
         self.assertEqual(restored.visited_cells[(0, 0)], 3)
         self.assertEqual(restored.cell_last_seen, memory.cell_last_seen)
         self.assertEqual(restored.enemy_sightings, memory.enemy_sightings)
+        self.assertEqual(restored.enemy_tracks, memory.enemy_tracks)
+        self.assertEqual(restored.tracker_assignments, memory.tracker_assignments)
         self.assertEqual(restored.peak_hp, memory.peak_hp)
         self.assertEqual(restored.peak_hp_by_type, memory.peak_hp_by_type)
         self.assertEqual(restored.fleeing_worker_ticks, 4)
@@ -478,6 +556,19 @@ class BalancedTacticTests(unittest.TestCase):
         self.assertEqual(core.action, ("SPAWN", UnitType.VANGUARD))
         self.assertEqual(memory.worker_losses, 1)
 
+    def test_recent_worker_loss_recovers_worker_when_defender_is_unaffordable(self) -> None:
+        survivor = FakeUnit(1, (2, 0), UnitType.WORKER)
+        memory = TacticMemory(
+            first_tick=1,
+            last_tick=49,
+            living_worker_ids={uid(1), uid(2)},
+        )
+        core = FakeCore()
+        turn = FakeTurn(tick=50, core=core, units=[survivor], resources=6)
+        choose_actions(turn, memory)
+        self.assertEqual(core.action, ("SPAWN", UnitType.WORKER))
+        self.assertEqual(memory.worker_losses, 1)
+
     def test_new_danger_cancels_an_unsafe_scout_waypoint(self) -> None:
         memory = TacticMemory()
         first = FakeUnit(1, (0, 0), UnitType.WORKER)
@@ -496,7 +587,7 @@ class BalancedTacticTests(unittest.TestCase):
         turn = FakeTurn(units=[vanguard, ranger], enemies=[adjacent, ranged])
         choose_actions(turn)
         self.assertEqual(vanguard.action, ("SWEEP", Direction.RIGHT))
-        self.assertEqual(ranger.action, ("SHOOT", adjacent.id))
+        self.assertEqual(ranger.action, ("SHOOT_CELL", ranged.position))
 
     def test_early_combat_units_ignore_ground_beacon(self) -> None:
         vanguard = FakeUnit(1, (5, 0), UnitType.VANGUARD)
@@ -567,6 +658,39 @@ class BalancedTacticTests(unittest.TestCase):
             all(_target[0] < 32 and _target[1] < 32 for _target in memory.scout_targets.values())
         )
 
+    def test_stale_visibility_patrol_skips_unreachable_cells(self) -> None:
+        memory = TacticMemory(
+            known_cells={
+                (0, 0),
+                (1, 0),
+                (2, 0),
+                (3, 0),
+                (4, 0),
+                (4, 1),
+                (9, 0),
+            },
+            cell_last_seen={
+                (1, 0): 1,
+                (4, 0): 1,
+                (9, 0): 1,
+            },
+        )
+        pathfinder = Pathfinder(
+            obstacles={(5, 0), (5, 1), (5, -1)},
+            blocked={(5, 0), (5, 1), (5, -1)},
+            bounds=(-1, -1, 10, 2),
+            known_cells=memory.known_cells,
+        )
+        targets = _stale_visibility_patrol_targets(
+            memory,
+            pathfinder,
+            (0, 0),
+            current_tick=100,
+            max_radius=20,
+        )
+        self.assertIn((1, 0), targets)
+        self.assertIn((4, 0), targets)
+        self.assertNotIn((9, 0), targets)
     def test_resource_chunk_patrol_prefers_stale_visibility(self) -> None:
         cells = {(x, 0) for x in range(32)}
         memory = TacticMemory(
@@ -672,8 +796,8 @@ class BalancedTacticTests(unittest.TestCase):
         memory = TacticMemory()
         turn = FakeTurn(core=FakeCore(position=(0, 0)))
 
-        self.assertEqual(_resource_radius(turn, memory, config), 44)
-        self.assertEqual(_exploration_radius(turn, memory, config), 44)
+        self.assertEqual(_resource_radius(turn, memory, config), 96)
+        self.assertEqual(_exploration_radius(turn, memory, config), 96)
 
     def test_adaptive_scout_bonus_adds_to_economy_scout_limit(self) -> None:
         config = strategy_config_from_dict(default_config_dict())
@@ -681,7 +805,7 @@ class BalancedTacticTests(unittest.TestCase):
 
         self.assertEqual(_worker_scout_limit(FakeTurn(), memory, config), 3)
 
-    def test_late_phase_requires_economy_before_offense(self) -> None:
+    def test_late_fleet_pursues_a_visible_remote_enemy(self) -> None:
         units = [
             *[
                 FakeUnit(index + 1, (index + 1, 0), UnitType.WORKER)
@@ -698,12 +822,14 @@ class BalancedTacticTests(unittest.TestCase):
             core=FakeCore(position=(0, 0)),
             units=units,
             resources=40,
-            enemies=[enemy(101, (20, 1), UnitType.RANGER)],
+            enemies=[enemy(101, (9, 1), UnitType.RANGER)],
         )
         choose_actions(turn, memory, config)
         self.assertEqual(_strategy_phase(turn, memory, config), PHASE_LATE)
         self.assertTrue(_offense_ready(turn, memory, config))
-        self.assertEqual(units[7].action, ("MOVE", Direction.RIGHT))
+        self.assertIn(units[7].id, memory.pursuit_unit_ids)
+        self.assertEqual(units[7].action[0], "MOVE")
+        self.assertNotIn(units[7].id, memory.combat_targets)
 
     def test_late_offense_boost_produces_missing_attack_unit(self) -> None:
         document = default_config_dict()
@@ -772,7 +898,7 @@ class BalancedTacticTests(unittest.TestCase):
         choose_actions(turn)
         self.assertNotEqual(worker.action, ("PICKUP_BEACON",))
 
-    def test_vanguard_does_not_launch_early_offensive_chase(self) -> None:
+    def test_vanguard_pursues_visible_enemy_during_early_economy(self) -> None:
         vanguard = FakeUnit(1, (5, 0), UnitType.VANGUARD, hp=4)
         target = enemy(101, (8, 0), UnitType.RANGER)
         memory = TacticMemory(first_tick=1, last_tick=9)
@@ -788,8 +914,8 @@ class BalancedTacticTests(unittest.TestCase):
             config,
         )
         self.assertEqual(memory.last_posture, POSTURE_ECONOMY)
-        self.assertIn(vanguard.id, memory.combat_targets)
-        self.assertNotEqual(vanguard.action, ("MOVE", Direction.RIGHT))
+        self.assertIn(vanguard.id, memory.pursuit_unit_ids)
+        self.assertEqual(vanguard.action, ("MOVE", Direction.RIGHT))
 
     def test_three_rangers_split_two_guards_and_one_outer_scout(self) -> None:
         first_guard = FakeUnit(1, (3, 0), UnitType.RANGER)
@@ -826,7 +952,218 @@ class BalancedTacticTests(unittest.TestCase):
         self.assertEqual(memory.last_posture, POSTURE_SURVIVAL)
         self.assertFalse(memory.combat_targets)
 
-    def test_core_migrates_toward_materially_better_cover(self) -> None:
+    def test_two_rangers_hold_distinct_radius_six_ring_sectors(self) -> None:
+        first = FakeUnit(1, (0, -6), UnitType.RANGER)
+        second = FakeUnit(2, (0, 6), UnitType.RANGER)
+        memory = TacticMemory(first_tick=1, last_tick=19)
+        choose_actions(
+            FakeTurn(tick=20, units=[first, second], resources=0),
+            memory,
+        )
+        self.assertEqual(memory.guard_ranger_ids, {first.id, second.id})
+        self.assertEqual(set(memory.guard_sectors.values()), {0, 1})
+        self.assertTrue(
+            all(
+                abs(target[0]) + abs(target[1]) == 6
+                for target in memory.guard_targets.values()
+            )
+        )
+
+    def test_remote_enemy_keeps_two_ring_guards_and_pulls_outer_ranger(self) -> None:
+        first_guard = FakeUnit(1, (0, -6), UnitType.RANGER)
+        second_guard = FakeUnit(2, (0, 6), UnitType.RANGER)
+        outer = FakeUnit(3, (8, 0), UnitType.RANGER)
+        target = enemy(101, (12, 0), UnitType.VANGUARD)
+        memory = TacticMemory(first_tick=1, last_tick=19)
+        choose_actions(
+            FakeTurn(
+                tick=20,
+                units=[first_guard, second_guard, outer],
+                enemies=[target],
+                resources=0,
+            ),
+            memory,
+        )
+        self.assertEqual(
+            memory.guard_ranger_ids,
+            {first_guard.id, second_guard.id},
+        )
+        self.assertNotIn(first_guard.id, memory.pursuit_unit_ids)
+        self.assertNotIn(second_guard.id, memory.pursuit_unit_ids)
+        self.assertIn(outer.id, memory.pursuit_unit_ids)
+        self.assertEqual(outer.action, ("SHOOT_CELL", (11, 0)))
+
+    def test_rangers_spread_fire_across_current_and_possible_cells(self) -> None:
+        first = FakeUnit(1, (0, 0), UnitType.RANGER)
+        second = FakeUnit(2, (1, 0), UnitType.RANGER)
+        memory = TacticMemory(first_tick=1)
+        memory.observe(
+            FakeTurn(
+                tick=10,
+                core=FakeCore(position=(10, 10)),
+                units=[first, second],
+                enemies=[enemy(101, (0, 2), UnitType.VANGUARD)],
+                resources=0,
+            )
+        )
+        first_next = FakeUnit(1, (0, 0), UnitType.RANGER)
+        second_next = FakeUnit(2, (1, 0), UnitType.RANGER)
+        choose_actions(
+            FakeTurn(
+                tick=11,
+                core=FakeCore(position=(10, 10)),
+                units=[first_next, second_next],
+                enemies=[enemy(101, (0, 3), UnitType.VANGUARD)],
+                resources=0,
+            ),
+            memory,
+        )
+        self.assertEqual(first_next.action, ("SHOOT_CELL", (0, 3)))
+        self.assertEqual(second_next.action, ("SHOOT_CELL", (1, 3)))
+
+    def test_missing_enemy_shot_uses_an_uncovered_possible_cell(self) -> None:
+        ranger = FakeUnit(1, (0, 0), UnitType.RANGER)
+        enemy_id, memory = missing_enemy_memory(ranger, (0, 2), (0, 1))
+
+        choose_actions(
+            FakeTurn(
+                tick=3,
+                core=FakeCore(position=(0, 0)),
+                units=[ranger],
+                obstacle_cells={(1, 0)},
+                resources=0,
+            ),
+            memory,
+        )
+
+        self.assertIn(enemy_id, memory.enemy_tracks)
+        self.assertEqual(ranger.action, ("SHOOT_CELL", (1, 1)))
+        self.assertNotEqual(ranger.action[1], (0, 2))
+        self.assertLess(memory.cell_last_seen.get(ranger.action[1], -1), 3)
+
+    def test_tracker_moves_to_recover_occluded_search_cells(self) -> None:
+        vanguard = FakeUnit(1, (1, 0), UnitType.VANGUARD)
+        enemy_id, memory = missing_enemy_memory(vanguard, (1, 0), (0, 0))
+
+        choose_actions(
+            FakeTurn(
+                tick=3,
+                core=FakeCore(position=(0, 0)),
+                units=[vanguard],
+                obstacle_cells={(2, 0)},
+                resources=0,
+            ),
+            memory,
+        )
+
+        self.assertIn(enemy_id, memory.enemy_tracks)
+        self.assertIn(vanguard.id, memory.pursuit_unit_ids)
+        self.assertIsNotNone(vanguard.action)
+        self.assertEqual(vanguard.action[0], "MOVE")
+        self.assertIn(vanguard.action[1], {Direction.UP, Direction.DOWN})
+
+    def test_lost_enemy_track_survives_search_window_then_expires(self) -> None:
+        memory = TacticMemory()
+        scout = FakeUnit(1, (6, 0), UnitType.VANGUARD)
+        memory.observe(
+            FakeTurn(
+                tick=1,
+                units=[scout],
+                enemies=[enemy(101, (10, 0), UnitType.RANGER)],
+                resources=0,
+            )
+        )
+        memory.observe(FakeTurn(tick=2, units=[], resources=0))
+        self.assertIn(uid(101), memory.enemy_tracks)
+        self.assertEqual(memory.enemy_tracks[uid(101)].missing_since_tick, 2)
+        memory.observe(FakeTurn(tick=13, units=[], resources=0))
+        self.assertIn(uid(101), memory.enemy_tracks)
+        memory.observe(FakeTurn(tick=14, units=[], resources=0))
+        self.assertNotIn(uid(101), memory.enemy_tracks)
+
+    def test_full_population_sacrifices_far_empty_worker_and_spawns_ranger(self) -> None:
+        workers = [
+            FakeUnit(
+                number,
+                (10 + number, 0),
+                UnitType.WORKER,
+                cargo=1 if number == 18 else 0,
+            )
+            for number in range(1, 19)
+        ]
+        ranger = FakeUnit(50, (4, 0), UnitType.RANGER)
+        core = FakeCore()
+        memory = TacticMemory(first_tick=1, last_tick=19)
+        choose_actions(
+            FakeTurn(
+                tick=20,
+                core=core,
+                units=[*workers, ranger],
+                resources=12,
+                enemies=[enemy(101, (3, 0), UnitType.VANGUARD)],
+            ),
+            memory,
+        )
+        sacrificed = [
+            worker for worker in workers if worker.action == ("SELF_DESTRUCT",)
+        ]
+        self.assertEqual(len(sacrificed), 1)
+        self.assertEqual(sacrificed[0].cargo, 0)
+        self.assertEqual(sacrificed[0].id, uid(17))
+        self.assertEqual(core.action, ("SPAWN", UnitType.RANGER))
+
+    def test_remote_enemy_assigns_nearby_empty_workers_to_block_escape(self) -> None:
+        workers = [
+            FakeUnit(1, (8, 1), UnitType.WORKER),
+            FakeUnit(2, (8, -1), UnitType.WORKER),
+        ]
+        memory = TacticMemory(first_tick=1, last_tick=19)
+        choose_actions(
+            FakeTurn(
+                tick=20,
+                units=workers,
+                enemies=[enemy(101, (10, 0), UnitType.VANGUARD)],
+                resources=0,
+            ),
+            memory,
+        )
+        self.assertEqual(set(memory.worker_block_targets), {uid(1), uid(2)})
+        self.assertTrue(all(worker.action is not None for worker in workers))
+
+    def test_hurt_ranger_returns_to_core_and_heals(self) -> None:
+        ranger = FakeUnit(1, (0, 0), UnitType.RANGER, hp=1)
+        choose_actions(FakeTurn(units=[ranger], resources=2))
+        self.assertEqual(ranger.action, ("HEAL",))
+
+    def test_full_core_sends_carrying_worker_to_explore(self) -> None:
+        worker = FakeUnit(1, (0, 0), UnitType.WORKER, cargo=1)
+        memory = TacticMemory()
+        choose_actions(
+            FakeTurn(
+                units=[worker],
+                resources=10,
+                resource_space=0,
+            ),
+            memory,
+        )
+        self.assertIsNotNone(worker.action)
+        self.assertEqual(worker.action[0], "MOVE")
+        self.assertNotEqual(worker.action, ("DEPOSIT",))
+        self.assertIn(worker.id, memory.scout_targets)
+
+    def test_ranger_can_fire_three_cells_on_an_exact_diagonal(self) -> None:
+        ranger = FakeUnit(1, (0, 0), UnitType.RANGER)
+        diagonal_core = enemy(101, (3, 3), core=True)
+        choose_actions(
+            FakeTurn(
+                core=FakeCore(position=(10, 10)),
+                units=[ranger],
+                enemies=[diagonal_core],
+                resources=0,
+            )
+        )
+        self.assertEqual(ranger.action, ("SHOOT_CELL", (3, 3)))
+    def test_core_migrates_toward_more_open_ground(self) -> None:
         workers = [
             FakeUnit(number, (10 + number, 10), UnitType.WORKER)
             for number in range(1, 5)
@@ -850,7 +1187,7 @@ class BalancedTacticTests(unittest.TestCase):
             enemies=[enemy(101, (3, 0), UnitType.VANGUARD)],
         )
         choose_actions(turn, memory, config)
-        self.assertEqual(core.action, ("START_MOVE", Direction.RIGHT))
+        self.assertEqual(core.action, ("START_MOVE", Direction.UP))
 
     def test_carrying_worker_blocks_core_migration(self) -> None:
         workers = [
@@ -985,6 +1322,58 @@ class BalancedTacticTests(unittest.TestCase):
         choose_actions(turn)
         self.assertEqual(core.action, ("SPAWN", UnitType.WORKER))
 
+    def test_quiet_development_spends_first_five_resources_on_worker(self) -> None:
+        core = FakeCore()
+        worker = FakeUnit(1, (2, 0), UnitType.WORKER)
+        choose_actions(
+            FakeTurn(core=core, units=[worker], resources=5),
+            TacticMemory(),
+        )
+        self.assertEqual(core.action, ("SPAWN", UnitType.WORKER))
+
+    def test_first_defender_milestone_waits_until_ten_resources(self) -> None:
+        document = default_config_dict()
+        document["production"]["enabled"] = True
+        document["production"]["order"] = [
+            {"unit_type": "WORKER", "target": 17},
+            {"unit_type": "VANGUARD", "target": 1},
+            {"unit_type": "RANGER", "target": 1},
+        ]
+        document["production"]["max_population"] = 19
+        config = strategy_config_from_dict(document)
+        workers = [
+            FakeUnit(index, (index + 1, 0), UnitType.WORKER)
+            for index in range(1, 7)
+        ]
+        core = FakeCore()
+        choose_actions(
+            FakeTurn(core=core, units=workers, resources=9),
+            TacticMemory(),
+            config,
+        )
+        self.assertIsNone(core.action)
+
+    def test_first_defender_preempts_the_seventeen_worker_target(self) -> None:
+        document = default_config_dict()
+        document["production"]["enabled"] = True
+        document["production"]["order"] = [
+            {"unit_type": "WORKER", "target": 17},
+            {"unit_type": "VANGUARD", "target": 1},
+            {"unit_type": "RANGER", "target": 1},
+        ]
+        document["production"]["max_population"] = 19
+        config = strategy_config_from_dict(document)
+        workers = [
+            FakeUnit(index, (index + 1, 0), UnitType.WORKER)
+            for index in range(1, 7)
+        ]
+        core = FakeCore()
+        choose_actions(
+            FakeTurn(core=core, units=workers, resources=10),
+            TacticMemory(),
+            config,
+        )
+        self.assertEqual(core.action, ("SPAWN", UnitType.VANGUARD))
 
     def test_deposit_event_records_throughput_and_cycle_duration(self) -> None:
         worker = FakeUnit(1, (0, 0), UnitType.WORKER)
@@ -1043,7 +1432,7 @@ class BalancedTacticTests(unittest.TestCase):
         self.assertEqual(memory.adaptive_action, "EXPAND_SEARCH")
         self.assertEqual(memory.adaptive_reason, "resource_scarcity")
         self.assertEqual(memory.adaptive_radius_delta, 2)
-        self.assertEqual(memory.resource_radius_limit, 64)
+        self.assertEqual(memory.resource_radius_limit, 96)
         self.assertEqual(memory.adaptive_scout_bonus, 1)
 
     def test_full_storage_reduces_radius_and_worker_target(self) -> None:
@@ -1162,7 +1551,9 @@ class BalancedTacticTests(unittest.TestCase):
             adaptive_scout_bonus=2,
             economy_experiment_block_id="block-a",
         )
-        with patch("balanced_tactic.active_block_id", return_value="block-b"):
+        with patch(
+            "arena_hero_tactic.tactic.engine.active_block_id", return_value="block-b"
+        ):
             choose_actions(FakeTurn(tick=10, units=[worker]), memory)
         self.assertEqual(memory.economy_experiment_block_id, "block-b")
         self.assertEqual([sample["tick"] for sample in memory.economy_history], [10])

@@ -7,11 +7,28 @@
 *.p12
 *.pfx
 
-# Arena Hero runtime state
+# Centralized local runtime and raw training data
+data/runtime/
+data/training/*.jsonl
+data/training/*.jsonl.lock
+data/training/source.json
+data/training/source.json.tmp
+data/training/exports/
+
+# Legacy root-level runtime state
 .arena_hero_state.json
 .arena_hero_state.json.tmp
 .arena_hero_dashboard_state.json
 .arena_hero_dashboard_state.json.tmp
+.arena_hero_compatibility_hold.json
+.arena_hero_version_report.json
+.arena_hero_compatibility_hold.json.tmp
+.arena_hero_version_report.json.tmp
+.arena_hero_training.jsonl
+.arena_hero_training.jsonl.lock
+.arena_hero_training_source.json
+.arena_hero_training_source.json.tmp
+training_exports/
 .peace_economy_telemetry.jsonl
 .peace_economy_telemetry.jsonl.lock
 .peace_economy_experiment_state.json

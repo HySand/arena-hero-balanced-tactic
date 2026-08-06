@@ -43,10 +43,10 @@ jobs:
 
       - name: Run privacy and secret scan
         shell: powershell
-        run: .\security_check.ps1
+        run: .\scripts\security_check.ps1
 
       - name: Run unit tests
-        run: python -B -m unittest -v
+        run: python -B -m unittest discover -s tests -v
 
       - name: Check Python syntax
         run: python -B -m compileall -q .

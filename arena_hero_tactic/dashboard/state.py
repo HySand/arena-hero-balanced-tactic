@@ -7,11 +7,12 @@ import time
 from pathlib import Path
 from typing import Any
 
-from strategy_config import StrategyConfig
+from ..configuration.strategy import StrategyConfig
+from ..training.experiment import load_state as load_experiment_state
 
 
 STATUS_VERSION = 1
-STATUS_FILE = Path(__file__).with_name(".arena_hero_dashboard_state.json")
+from ..runtime.paths import DASHBOARD_STATE_FILE as STATUS_FILE
 
 
 def _enum_value(value: Any) -> Any:
@@ -37,6 +38,32 @@ def _position(value: Any) -> list[int] | None:
         return [int(value[0]), int(value[1])]
     except (IndexError, TypeError, ValueError):
         return None
+
+
+def _experiment_snapshot() -> dict[str, Any]:
+    state = load_experiment_state()
+    enabled = bool(state.get("enabled"))
+    if enabled:
+        status = "running"
+    elif state.get("paused"):
+        status = "paused"
+    elif state:
+        status = "stopped"
+    else:
+        status = "inactive"
+    return {
+        "status": status,
+        "enabled": enabled,
+        "experiment_id": state.get("experiment_id"),
+        "candidate_id": state.get("candidate_id"),
+        "block_id": state.get("block_id"),
+        "block_phase": state.get("block_phase"),
+        "readiness_samples": int(state.get("readiness_samples_collected", 0)),
+        "warmup_samples": int(state.get("warmup_samples_collected", 0)),
+        "measurement_samples": int(state.get("measurement_samples_collected", 0)),
+        "max_readiness_samples": int(state.get("max_readiness_samples", 0)),
+        "pause_reason": state.get("pause_reason"),
+    }
 
 
 def _format_action(action: Any) -> str:
@@ -154,8 +181,6 @@ def build_dashboard_state(
         ),
         "resource_space": resource_space,
         "population": len(units),
-        "population_tier": int(getattr(turn, "population_tier", 0)),
-        "upkeep_next_tick": int(getattr(turn, "upkeep_next_tick", 0)),
         "counts": counts,
         "production_order": [
             {"unit_type": item.unit_type, "target": item.target}
@@ -191,6 +216,7 @@ def build_dashboard_state(
         "planned_deposited": memory.planned_deposited,
         "units": units,
         "events": events,
+        "experiment": _experiment_snapshot(),
         "adaptive_economy": {
             "enabled": config.adaptive_economy.enabled,
             "action": getattr(memory, "adaptive_action", "WARMUP"),

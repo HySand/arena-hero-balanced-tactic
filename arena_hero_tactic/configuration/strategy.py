@@ -10,8 +10,10 @@ from pathlib import Path
 from typing import Any, Mapping
 
 
+from ..runtime.paths import CONFIG_FILE, DEFAULT_CONFIG_FILE
+
 CONFIG_VERSION = 1
-CONFIG_FILE = Path(__file__).with_name("strategy_config.json")
+
 UNIT_TYPES = ("WORKER", "VANGUARD", "RANGER")
 AFTER_PLAN_MODES = ("adaptive", "hold")
 
@@ -46,6 +48,7 @@ class WorkerConfig:
     max_economy_scouts: int
     max_scouts_under_threat: int
     safe_scout_radius: int
+    recovery_worker_floor: int
 
 
 @dataclass(frozen=True)
@@ -177,6 +180,7 @@ _DEFAULT_DOCUMENT: dict[str, Any] = {
         "max_economy_scouts": 8,
         "max_scouts_under_threat": 1,
         "safe_scout_radius": 12,
+        "recovery_worker_floor": 2,
     },
     "adaptive_economy": {
         "enabled": True,
@@ -185,7 +189,7 @@ _DEFAULT_DOCUMENT: dict[str, Any] = {
         "adjustment_cooldown_ticks": 6,
         "radius_step": 2,
         "min_resource_radius": 6,
-        "max_resource_radius": 44,
+        "max_resource_radius": 96,
         "scarcity_ticks": 3,
         "long_cycle_ticks": 24,
         "low_throughput_per_worker": 0.025,
@@ -380,6 +384,7 @@ def strategy_config_from_dict(document: Mapping[str, Any]) -> StrategyConfig:
         _integer(raw_workers, "max_economy_scouts", 8, 0, 100),
         _integer(raw_workers, "max_scouts_under_threat", 1, 0, 100),
         _integer(raw_workers, "safe_scout_radius", 12, 0, 500),
+        _integer(raw_workers, "recovery_worker_floor", 2, 1, 100),
     )
 
     raw_pacing = _section(document, "pacing")
@@ -391,7 +396,7 @@ def strategy_config_from_dict(document: Mapping[str, Any]) -> StrategyConfig:
         _integer(raw_adaptive, "adjustment_cooldown_ticks", 6, 1, 1000),
         _integer(raw_adaptive, "radius_step", 2, 1, 20),
         _integer(raw_adaptive, "min_resource_radius", 6, 1, 500),
-        _integer(raw_adaptive, "max_resource_radius", 44, 1, 500),
+        _integer(raw_adaptive, "max_resource_radius", 96, 1, 500),
         _integer(raw_adaptive, "scarcity_ticks", 3, 1, 64),
         _integer(raw_adaptive, "long_cycle_ticks", 24, 1, 1000),
         _number(raw_adaptive, "low_throughput_per_worker", 0.025, 0, 100),
@@ -558,7 +563,12 @@ def load_strategy_config(
             return cached[1]
     try:
         if stamp is None:
-            config = default_strategy_config()
+            if resolved == CONFIG_FILE.resolve() and DEFAULT_CONFIG_FILE.is_file():
+                config = strategy_config_from_dict(
+                    json.loads(DEFAULT_CONFIG_FILE.read_text(encoding="utf-8"))
+                )
+            else:
+                config = default_strategy_config()
         else:
             config = strategy_config_from_dict(
                 json.loads(resolved.read_text(encoding="utf-8"))

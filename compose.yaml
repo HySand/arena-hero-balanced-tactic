@@ -1,0 +1,48 @@
+services:
+  tactic:
+    build: .
+    restart: unless-stopped
+    init: true
+    env_file:
+      - .env
+    environment:
+      ARENA_HERO_VERSION_CHECK: "1"
+      ARENA_HERO_CONFIG_FILE: /data/runtime/strategy_config.json
+      ARENA_HERO_STATE_FILE: /data/runtime/state/tactic_state.json
+      ARENA_HERO_DASHBOARD_STATE_FILE: /data/runtime/state/dashboard_state.json
+      ARENA_HERO_TACTIC_LOCK_FILE: /data/runtime/locks/tactic.lock
+      ARENA_HERO_TRAINING_FILE: /data/training/turns.jsonl
+      ARENA_HERO_TRAINING_SOURCE_FILE: /data/training/source.json
+      ARENA_HERO_ECONOMY_TELEMETRY_FILE: /data/training/peace_economy_telemetry.jsonl
+      ARENA_HERO_EXPERIMENT_STATE_FILE: /data/runtime/state/peace_economy_experiment_state.json
+      ARENA_HERO_COMPAT_MARKER: /data/runtime/state/compatibility_hold.json
+      ARENA_HERO_COMPAT_REPORT: /data/runtime/state/version_report.json
+    volumes:
+      - arena-hero-data:/data
+    healthcheck:
+      test: ["CMD", "python", "-c", "from arena_hero_tactic.runtime.version_monitor import compatibility_hold_active; raise SystemExit(1 if compatibility_hold_active() else 0)"]
+      interval: 5m
+      timeout: 10s
+      retries: 2
+      start_period: 20s
+
+  dashboard:
+    build: .
+    restart: unless-stopped
+    init: true
+    environment:
+      ARENA_HERO_CONFIG_FILE: /data/runtime/strategy_config.json
+      ARENA_HERO_DASHBOARD_STATE_FILE: /data/runtime/state/dashboard_state.json
+      ARENA_HERO_DASHBOARD_LOCK_FILE: /data/runtime/locks/dashboard.lock
+      ARENA_HERO_EXPERIMENT_STATE_FILE: /data/runtime/state/peace_economy_experiment_state.json
+    command: ["python", "-u", "-m", "arena_hero_tactic.dashboard.server", "--host", "0.0.0.0", "--port", "8765"]
+    volumes:
+      - arena-hero-data:/data
+    ports:
+      - "127.0.0.1:8765:8765"
+    depends_on:
+      tactic:
+        condition: service_started
+
+volumes:
+  arena-hero-data:

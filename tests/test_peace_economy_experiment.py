@@ -5,7 +5,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from peace_economy_experiment import (
+from arena_hero_tactic.training.experiment import (
     _candidate_results,
     _record_metrics,
     _select_best,
@@ -16,7 +16,7 @@ from peace_economy_experiment import (
     restart_current_block,
     start_experiment,
 )
-from strategy_config import default_config_dict, load_strategy_config, save_strategy_config
+from arena_hero_tactic.configuration.strategy import default_config_dict, load_strategy_config, save_strategy_config
 
 
 class PeaceEconomyExperimentTests(unittest.TestCase):
@@ -175,12 +175,69 @@ class PeaceEconomyExperimentTests(unittest.TestCase):
                 encoding="utf-8",
             )
             state = restart_current_block(state_path=state_path)
+            self.assertEqual(state["version"], 2)
+            self.assertEqual(state["phase_policy_version"], 2)
             self.assertEqual(state["block_id"], "test-plan-0001-r2")
             self.assertEqual(state["block_ticks"], 0)
+            self.assertEqual(state["readiness_samples_collected"], 0)
+            self.assertEqual(state["warmup_samples_collected"], 0)
             self.assertEqual(state["measurement_samples_collected"], 0)
             self.assertEqual(state["block_outcomes"], 0)
             self.assertNotIn("last_record_key", state)
             self.assertEqual(active_block_id(state_path), state["block_id"])
+
+    def test_development_ticks_do_not_consume_warmup_or_measurement(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            plan = root / "plan.json"
+            state_path = root / "state.json"
+            archive = root / "telemetry.jsonl"
+            config_path = root / "config.json"
+            self._plan(plan)
+            save_strategy_config(default_config_dict(), config_path)
+            start_experiment(
+                plan_path=plan,
+                state_path=state_path,
+                config_path=config_path,
+                archive_path=archive,
+            )
+
+            for tick in range(1, 21):
+                config = load_strategy_config(config_path, strict=True)
+                append_telemetry(
+                    self._sample(tick),
+                    config,
+                    composition={"workers": 1, "vanguards": 0, "rangers": 0},
+                    posture="ECONOMY",
+                    threat_score=0.0,
+                    worker_losses=0,
+                    path=archive,
+                    state_path=state_path,
+                )
+
+            state = load_state(state_path)
+            self.assertEqual(state["candidate_id"], "scouts-12")
+            self.assertEqual(state["readiness_samples_collected"], 20)
+            self.assertEqual(state["warmup_samples_collected"], 0)
+            self.assertEqual(state["measurement_samples_collected"], 0)
+            records = load_records(archive)
+            self.assertTrue(all(item["block_phase"] == "readiness" for item in records))
+
+            for tick in range(21, 24):
+                config = load_strategy_config(config_path, strict=True)
+                append_telemetry(
+                    self._sample(tick),
+                    config,
+                    composition={"workers": 17, "vanguards": 1, "rangers": 1},
+                    posture="ECONOMY",
+                    threat_score=0.0,
+                    worker_losses=0,
+                    path=archive,
+                    state_path=state_path,
+                )
+
+            state = load_state(state_path)
+            self.assertEqual(state["candidate_id"], "scouts-8")
 
     def test_experiment_rotates_candidates_and_restores_original(self) -> None:
         with tempfile.TemporaryDirectory() as directory:

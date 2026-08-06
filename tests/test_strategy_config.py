@@ -9,19 +9,20 @@ import urllib.error
 import urllib.request
 from dataclasses import replace
 from pathlib import Path
+from unittest.mock import patch
 
-from dashboard_state import build_dashboard_state
-from peace_economy_training import apply_peace_training, train_peace_economy
-from strategy_config import (
+from arena_hero_tactic.dashboard.state import build_dashboard_state
+from arena_hero_tactic.training.peace_economy import apply_peace_training, train_peace_economy
+from arena_hero_tactic.configuration.strategy import (
     StrategyConfigError,
     default_config_dict,
     load_strategy_config,
     save_strategy_config,
     strategy_config_from_dict,
 )
-from tactic_dashboard import create_server
+from arena_hero_tactic.dashboard.server import create_server
 from test_balanced_tactic import FakeTurn
-from balanced_tactic import TacticMemory
+from arena_hero_tactic.tactic.engine import TacticMemory
 
 
 class StrategyConfigTests(unittest.TestCase):
@@ -130,7 +131,7 @@ class StrategyConfigTests(unittest.TestCase):
                 config.adaptive_economy.worker_target_min,
                 config.adaptive_economy.worker_target_max,
             ),
-            (6, 44, 4, 8),
+            (6, 96, 4, 8),
         )
 
     def test_invalid_order_and_thresholds_are_rejected(self) -> None:
@@ -151,7 +152,7 @@ class StrategyConfigTests(unittest.TestCase):
             strategy_config_from_dict(pacing)
 
         adaptive_radius = default_config_dict()
-        adaptive_radius["adaptive_economy"]["min_resource_radius"] = 50
+        adaptive_radius["adaptive_economy"]["min_resource_radius"] = 100
         with self.assertRaises(StrategyConfigError):
             strategy_config_from_dict(adaptive_radius)
 
@@ -281,6 +282,34 @@ class DashboardAPITests(unittest.TestCase):
         self.assertTrue(status["online"])
         self.assertFalse(status["stale"])
         self.assertEqual(status["tick"], 42)
+
+    def test_internal_file_errors_do_not_expose_local_paths(self) -> None:
+        private_detail = "PRIVATE_LOCATION"
+        with patch(
+            "arena_hero_tactic.dashboard.server.save_strategy_config",
+            side_effect=OSError(private_detail),
+        ):
+            status, response = self.put_json("/api/config", default_config_dict())
+        self.assertEqual(status, 500)
+        self.assertNotIn(private_detail, json.dumps(response))
+
+        self.status_path.write_text("{}", encoding="utf-8")
+        with patch(
+            "arena_hero_tactic.dashboard.server.Path.read_text",
+            side_effect=OSError(private_detail),
+        ):
+            request = urllib.request.Request(self.base_url + "/api/status")
+            try:
+                urllib.request.urlopen(request, timeout=2)
+            except urllib.error.HTTPError as error:
+                try:
+                    body = error.read().decode("utf-8")
+                    self.assertEqual(error.code, 500)
+                    self.assertNotIn(private_detail, body)
+                finally:
+                    error.close()
+            else:
+                self.fail("status read error should return HTTP 500")
 
 
 if __name__ == "__main__":

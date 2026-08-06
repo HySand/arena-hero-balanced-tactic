@@ -64,7 +64,7 @@ const THEME_DEFAULTS = {
 
 const PRODUCTION_STYLES = {
   peace: {
-    help: "17 工人持续寻矿，1 先锋机动支援，1 游侠守卫 Core；保持 19 人口，不产生维护费。",
+    help: "17 工人持续寻矿，1 先锋机动支援，1 游侠守卫 Core；保持 19 人口，保持人口上限以内稳定运行。",
     production: {
       enabled: true,
       order: [
@@ -81,7 +81,7 @@ const PRODUCTION_STYLES = {
     coreMigration: false,
   },
   combat: {
-    help: "8 工人维持经济，5 先锋压制近战，6 游侠提供火力；保持 19 人口，不产生维护费。",
+    help: "8 工人维持经济，5 先锋压制近战，6 游侠提供火力；保持 19 人口，保持人口上限以内稳定运行。",
     production: {
       enabled: true,
       order: [
@@ -622,6 +622,13 @@ function renderConfig() {
   updateProductionSummary();
 }
 
+function dynamicUnitCost(unitType, population) {
+  const base = UNIT_META[unitType]?.cost ?? 0;
+  if (population < 20) return base;
+  const exponent = Math.floor((population - 20) / 5) + 1;
+  return Math.round(base * (1.3 ** exponent));
+}
+
 function renderProductionList() {
   const list = $("productionList");
   list.replaceChildren();
@@ -646,7 +653,7 @@ function renderProductionList() {
     const strong = document.createElement("strong");
     strong.textContent = meta.name;
     const cost = document.createElement("span");
-    cost.textContent = `生产成本 ${meta.cost}`;
+    cost.textContent = `基础成本 ${meta.cost}`;
     title.append(strong, cost);
 
     const target = document.createElement("div");
@@ -722,9 +729,13 @@ function updateProductionSummary() {
   let cost = 0;
   let firstMissing = null;
   let targetPopulation = 0;
+  let simulatedPopulation = Number(state.status?.population ?? 0);
   state.config.production.order.forEach((step) => {
     const missing = Math.max(0, step.target - (counts[step.unit_type] || 0));
-    cost += missing * UNIT_META[step.unit_type].cost;
+    for (let index = 0; index < missing; index += 1) {
+      cost += dynamicUnitCost(step.unit_type, simulatedPopulation);
+      simulatedPopulation += 1;
+    }
     targetPopulation += step.target;
     if (!firstMissing && missing > 0) firstMissing = `${UNIT_META[step.unit_type].name} × ${missing}`;
   });
@@ -803,7 +814,7 @@ function renderStatus() {
   $("metricAccepted").textContent = status?.accepted ? "计划已接受" : "等待已接受计划";
   $("metricResources").textContent = status?.resources ?? "—";
   $("metricCapacity").textContent = status?.resource_capacity ?? "—";
-  $("metricUpkeep").textContent = `下 Tick 维护费 ${status?.upkeep_next_tick ?? "—"}`;
+  $("metricPricing").textContent = "生产价格按人口动态计算";
   $("metricPopulation").textContent = status?.population ?? "—";
   const counts = status?.counts || {};
   $("metricCounts").textContent = `W ${counts.WORKER ?? "—"} · V ${counts.VANGUARD ?? "—"} · R ${counts.RANGER ?? "—"}`;

@@ -1,163 +1,178 @@
 # Arena Hero 平衡战术
 
-一个面向 Arena Hero 的可持续运行 Python 战术，使用官方 `arena-hero` SDK，并提供本地中文控制台。项目会根据每个 Tick 的真实状态在经济、警戒和生存姿态之间切换。
+一个基于 Arena Hero 官方 `arena-hero` Python SDK 的持续运行战术。项目包含可测试的战术引擎、本地中文控制台、匿名训练数据采集、长期参数实验和 GitHub CI。
 
-> 这是社区项目，不是 Arena Hero 官方客户端。项目不包含任何 API key、账号信息或个人游戏状态。
+> 这是社区项目，不是 Arena Hero 官方客户端。仓库不包含 API key、账号信息、个人游戏状态或原始本地训练记录。
+
+## 功能分区
+
+- **战术**：经济、警戒、生存三种姿态，工人采集与探索，先锋和游侠防守，Core 安全控制。
+- **配置**：经过校验的策略配置、热加载和公开默认值。
+- **训练**：匿名 Tick 数据、和平经济遥测、数据包导出/合并和重复训练。
+- **控制台**：本地 HTTP 服务、实时状态快照和静态网页。
+- **运行保障**：集中路径、单实例锁、官方契约版本检查和兼容性保护。
+
+实现代码位于 `arena_hero_tactic/` 的对应子目录；根目录六个 `.py` 入口只保留旧命令和旧导入兼容性，新代码统一使用规范子包。
 
 ## 运行要求
 
-- Windows 10/11。
 - Python 3.11 或更高版本。
-- Arena Hero 官方 Python SDK `0.2.6` 或同一 `0.2.x` 兼容系列的更高版本。
-- Node.js 仅用于开发阶段的 JavaScript 语法检查，正常运行不需要。
-
-## 主要功能
-
-- 工人自动采集、返航交付、资源目标去重和危险规避。
-- 采矿半径按真实可行路径计算，并用“去矿 + 回 Core”的完整循环过滤低效率目标。
-- 前期近距离采矿，中期逐步扩大探索，后期满足资源与兵力门槛后再进攻。
-- 先锋近战巡逻、游侠远程守卫、公共 Beacon 独立控制。
-- Core 遇险时寻找障碍掩护位置，先锋和游侠掩护，工人撤离。
-- 中文网页控制台，可调整生产、探索、进攻、守卫、迁移和主题配色。
-- 配置热加载，保存后通常从下一个 Tick 开始生效。
+- Arena Hero 官方 SDK `arena-hero>=0.2.9,<0.3`。
+- Windows 10/11 可使用一键启动；Linux/macOS 可使用模块或 Shell 入口。
+- Node.js 只用于开发阶段检查控制台 JavaScript，正常运行不需要。
 
 ## 快速开始
 
 ### Windows 一键启动
 
-1. 安装 Python 3.11 或更高版本，并勾选 `Add python.exe to PATH`。
-2. 下载或克隆本项目。
-3. 双击 `run_all.cmd`。
-4. 首次运行会创建 `.venv`、安装依赖并弹出 API key 输入窗口。
-5. 保持策略窗口和控制台窗口开启。
+1. 安装 Python 3.11+，并勾选 `Add python.exe to PATH`。
+2. 下载或克隆项目。
+3. 双击 `启动控制台.vbs`，也可以双击 `run_all.cmd`。
+4. 首次运行会创建 `.venv`、安装依赖并提示输入 API key。
+5. 浏览器会打开 `http://127.0.0.1:8765/`。
 
-控制台默认地址为 `http://127.0.0.1:8765/`。
-
-以后可以直接双击 `run_all.cmd`。只运行战术时使用 `run_tactic.cmd`，只打开控制台时使用 `run_dashboard.cmd`。
-
-### 手动启动
+单独启动：
 
 ```powershell
-Set-Location -LiteralPath '你解压或克隆后的项目目录'
-./setup.cmd
-./.venv/Scripts/python.exe -u tactic_dashboard.py
+./scripts/setup.cmd
+./scripts/run_dashboard.cmd
+./scripts/run_tactic.cmd
 ```
 
-另开一个 PowerShell 窗口：
+手动使用规范模块：
 
 ```powershell
-Set-Location -LiteralPath '你解压或克隆后的项目目录'
-./.venv/Scripts/python.exe -u balanced_tactic.py
+./.venv/Scripts/python.exe -u -m arena_hero_tactic.dashboard.server --open
+./.venv/Scripts/python.exe -u -m arena_hero_tactic.tactic.engine
 ```
 
-## API Key 安全
+### Linux / macOS
 
-API key 只应保存在本机 `.env` 文件中。`.env`、策略记忆、控制台状态和虚拟环境都已加入 `.gitignore`。
+```sh
+python3 -m pip install -r requirements.txt
+./scripts/run_tactic.sh
+```
+
+API key 写入项目根目录的 `.env`：
 
 ```text
-ARENA_HERO_API_KEY=你的_API_KEY
+ARENA_HERO_API_KEY=YOUR_API_KEY
 ```
 
-不要把 `.env`、终端输出截图或包含凭据的压缩包提交到 GitHub。更完整的处理方式见 [SECURITY.md](SECURITY.md)。
+`.env` 已被 Git 忽略。不要把真实 key、终端截图或含凭据的压缩包提交到 GitHub。
 
-## 控制台
+## 配置
 
-网页顶部显示连接状态、Tick、资源、人口、Core 和当前阶段。页面内可以修改：
+- `config/strategy_config.json`：可提交的公开默认配置，新克隆在没有本地配置时读取它。
+- `data/runtime/strategy_config.json`：控制台保存的本地运行配置，不上传 GitHub。
+- `.env.example`：环境变量模板，不含真实凭据。
 
-- 生产顺序、最低数量、资源保留值和人口上限。
-- 威胁警戒阈值与全面回防阈值。
-- 工人采矿范围、探索范围和外出人数。
-- 前期、中期、后期的扩张节奏。
-- 先锋活动距离、游侠守卫比例和 Beacon 条件。
-- Core 危险迁移、掩护兵力和工人撤离范围。
-- 深色、浅色、夜蓝主题以及自定义页面、面板、卡片和主色。
+控制台保存配置后，战术通常会从下一个 Tick 热加载。配置包括生产顺序、资源保留、威胁阈值、采矿与探索范围、进攻门槛、守卫比例、Core 迁移和界面主题。
 
-所有“半径”和“距离”单位都是地图格子数。采矿半径是 Core 到矿点绕开已知障碍后的最大返航路径，不再只是坐标差；工人的去程与返航总路程还必须控制在两倍半径内。`Tick` 是游戏回合，不是现实时间。
+## 数据与重复训练
 
-控制台状态中的“有效半径 / 配置上限”表示本回合真正分配到的最远矿路程。例如 `6/10` 代表允许最多 10 格，但当前近矿已足够，最远只派到 6 格。无法可靠返航、绕墙后超出上限或完整循环过长的矿点会被跳过，空闲工人转为分区寻矿。
+所有可变数据统一放在 `data/`：
 
-地图记忆会保存在本地 `.arena_hero_state.json` 中：永久障碍、已探索格、访问次数和每格最后可见 Tick 会跨 Tick 保留。寻路只把已确认的空地作为中间路径，未知格只能作为分区探索的边界目标，因此不会把雾中的未知区域当成穿墙捷径。控制台阶段卡会显示已记录地图格数和障碍数。
+| 路径 | 内容 | GitHub |
+|---|---|---|
+| `data/runtime/` | 地图记忆、控制台快照、锁、日志、实验状态、本地配置 | 忽略 |
+| `data/training/turns.jsonl` | 通用匿名 Tick 训练记录 | 忽略 |
+| `data/training/peace_economy_telemetry.jsonl` | 和平经济长期遥测 | 忽略 |
+| `data/training/source.json` | 本机匿名来源标识 | 忽略 |
+| `data/training/exports/` | 可交换训练包 | 忽略 |
+| `data/models/` | 可公开的聚合模型与训练摘要 | 提交 |
 
-资源按官方 v0.11 规则处理：未采集点保持原位；自然资源点被成功采集后消失，服务端每 4 个已结算 Tick 在同一个 32x32 区块内用确定性随机的合法位置补足配额。因此策略记住“哪些区块产矿”和“哪里最久没有重新观察”，不会把已经耗尽的坐标永久当成矿点。规则原文见 [地图与视野](https://doc.arenahero.io/zh-Hans/rules/map-and-vision)。
+程序会自动把旧根目录数据和上一版隐藏文件迁移到这些位置。原始 JSONL 保留在本机，可重复导出、合并和训练。
 
-## 默认策略
-
-仓库默认使用冻结的和平经济模型：`17 工人 / 1 先锋 / 1 游侠 = 19`，不进入人口维护费档位。默认关闭 Core 迁移和主动进攻，游侠留守 Core，空闲工人负责采矿与分区探索。
-
-旧的 24-44 资源搜索半径模型来自 2026 年 8 月 3 日的 243 Tick 实战遥测，但它允许和平工人在 Core 附近等待，并把寻路限制在 45 格，因此已标记为 `invalidated`，不能再作为默认高置信度数据。当前发布候选半径为 96，状态为 `provisional`；当近距离半径不能覆盖所有空闲工人时，策略会在候选配置允许的完整半径内继续分配，其余工人优先回扫已产矿区块。原始 `.arena_hero_state.json` 含本地游戏状态，已被 `.gitignore` 排除，不随仓库发布；可发布的训练摘要保存在 `strategy_config.json` 的 `extensions` 中。
-
-旧训练快照和 v2 原始遥测仍保留用于审计，但不再覆盖或参与当前候选排名。新的 `peace-17-1-1-radius-v3` 实验会按交错区组比较 64、96、128 三个最大资源半径；只有利用率至少 0.75 且有足够采集/存入结果的候选才可能提升置信度。
-
-积累新的本地遥测后，可重新训练并应用参数：
+查看与导出通用数据：
 
 ```powershell
-./.venv/Scripts/python.exe peace_economy_training.py --apply
+./.venv/Scripts/python.exe -m arena_hero_tactic.training.dataset status
+./.venv/Scripts/python.exe -m arena_hero_tactic.training.dataset export `
+  --output data/training/exports/my-run.zip
 ```
 
-训练器默认拒绝用低置信度结果覆盖现有中高置信度模型。只有明确需要降级覆盖时才使用 `--force`。
-
-### 固定 17/1/1 的长期调参
-
-长期实验保存在 `peace_economy_17_1_1.json`。当前阶段用交错区组比较最大资源半径 `64/96/128`：每组先预热 24 Tick，至少测量 240 Tick，并重复三轮；只有 `17/1/1` 且处于 `ECONOMY` 姿态的样本进入排名。原始匿名遥测追加到被忽略的 `.peace_economy_telemetry.jsonl`，不会提交到 GitHub。
-
-开始或续跑长期实验：
+合并多个标准数据包：
 
 ```powershell
-./run_peace_economy_experiment.cmd
+./.venv/Scripts/python.exe -m arena_hero_tactic.training.dataset merge `
+  data/training/exports/my-run.zip other-player.zip `
+  --output data/training/exports/merged.zip
 ```
 
-查看进度、发布匿名汇总或停止并恢复发布模型：
+从集中遥测重复训练和平经济参数：
 
 ```powershell
-./.venv/Scripts/python.exe peace_economy_experiment.py status
-./.venv/Scripts/python.exe peace_economy_experiment.py publish
-./.venv/Scripts/python.exe peace_economy_experiment.py stop
+./.venv/Scripts/python.exe -m arena_hero_tactic.training.peace_economy --telemetry
 ```
 
-实验结束不会自动用最后一组候选覆盖生产配置，而是恢复当前高置信度模型并在状态文件中给出候选排名；确认新的候选达到高置信度后，再单独提升为默认值。
+可用 `--candidate-id radius-96` 和 `--measurements-only` 限定实验样本；确认结果后才添加 `--apply`。不同 `contract.rules_version` 的数据不能直接混合训练。
+
+训练包格式为 `arena-hero-portable-training-dataset/v1`，包含 `manifest.json`、`schema.json` 和 `records.jsonl`。实体 ID 会按本机来源稳定匿名化，坐标转换为相对 Core 坐标，凭据与账号身份不会写入。
+
+更多说明见 [data/README.md](data/README.md)。
+
+## 长期实验
+
+固定 `17 Worker / 1 Vanguard / 1 Ranger` 的实验计划在 `config/peace_economy_17_1_1.json`。开始或续跑：
+
+```powershell
+./scripts/run_peace_economy_experiment.cmd
+```
+
+查看、发布匿名汇总或停止实验：
+
+```powershell
+./.venv/Scripts/python.exe -m arena_hero_tactic.training.experiment status
+./.venv/Scripts/python.exe -m arena_hero_tactic.training.experiment publish
+./.venv/Scripts/python.exe -m arena_hero_tactic.training.experiment stop
+```
+
+实验不会把最后一个候选直接发布为生产默认值；候选必须满足样本量、结果事件和有效利用率门槛。
 
 ## 项目结构
 
-- `balanced_tactic.py`：战术决策与 Arena Hero 连接入口。
-- `strategy_config.py`：配置模型、默认值和校验。
-- `strategy_config.json`：控制台当前配置。
-- `tactic_dashboard.py`：本地 HTTP 控制台服务。
-- `dashboard/`：网页界面。
-- `dashboard_state.py`：写入不含凭据的实时状态快照。
-- `peace_economy_training.py`：从本地遥测训练和平经济默认参数。
-- `peace_economy_training_snapshot.json`：当前发布所用模型与最新冻结候选的匿名汇总。
-- `peace_economy_experiment.py`：固定 `17/1/1` 的长期区组调参与匿名遥测归档。
-- `peace_economy_17_1_1.json`：长期调参计划、候选范围和公开结果文件。
-- `run_peace_economy_experiment.cmd`：开始或续跑长期调参。
-- `test_balanced_tactic.py`：战术行为测试。
-- `test_strategy_config.py`：配置和控制台 API 测试。
-- `test_peace_economy_experiment.py`：长期调参和隐私归档测试。
-- `verify.cmd`：本地完整验收入口。
-- `.github/workflows/ci.yml`：GitHub Actions 自动测试。
+```text
+arena_hero_tactic/
+  tactic/             战术决策和官方 SDK 循环
+  configuration/      配置模型、默认值和校验
+  training/           数据集、实验和训练
+  dashboard/          状态投影与 HTTP 服务
+  runtime/            路径、进程锁和版本保护
+config/                可提交配置与实验计划
+dashboard/             控制台 HTML/CSS/JavaScript
+data/                  本地数据和可公开模型
+scripts/               安装、运行、验证与安全脚本
+tests/                 单元与契约测试
+deploy/                Docker/systemd 长期运行资料
+.github/               CI 与 Dependabot
+```
+
+完整依赖边界见 [docs/PROJECT_STRUCTURE.md](docs/PROJECT_STRUCTURE.md)。
+当前战术的决策顺序、算法依据和未采用方案见 [docs/TACTIC_ALGORITHM.md](docs/TACTIC_ALGORITHM.md)。
 
 ## 开发与验证
 
 ```powershell
-./verify.cmd
+./scripts/verify.cmd
 ```
 
-该脚本会自动准备环境，然后运行隐私与凭据扫描、完整单元测试、Python 编译检查、依赖一致性检查、Git 空白错误检查，并在本机安装 Node.js 时检查控制台 JavaScript。安全扫描只报告文件、行号和规则名称，不会打印疑似秘密值。GitHub Actions 会在每次 Push 和 Pull Request 时使用 Python 3.11 与 3.13 自动复验。参与开发前请阅读 [CONTRIBUTING.md](CONTRIBUTING.md)。
+验证会运行：上传候选隐私扫描、完整单元测试、Python 编译、依赖一致性、Git 空白错误，以及可用时的 JavaScript 语法检查。GitHub Actions 会在 Python 3.11 和 3.13 上重复核心检查。
 
-## 兼容性与更新
+准备上传前按 [docs/GITHUB_UPLOAD.md](docs/GITHUB_UPLOAD.md) 检查。参与开发前阅读 [CONTRIBUTING.md](CONTRIBUTING.md)。
 
-项目使用官方 `arena-hero` PyPI 包，不自行实现 WebSocket、重连、状态模型或命令提交协议。`requirements.txt` 将 SDK 限制在兼容的 `0.2.x` 系列；Dependabot 会定期检查 Python 依赖和 GitHub Actions 更新。
+## 部署
 
-如果连接成功但在第一个 Turn 前停止，或出现协议字段校验错误，应先运行 `setup.cmd` 同步依赖，再重新启动战术。不要通过关闭 SDK 校验或修改虚拟环境中的包来绕过协议不兼容。
+Docker Compose：
 
-## 停止和重置
+```sh
+docker compose up --build -d
+```
 
-- 在策略窗口或控制台窗口按 `Ctrl+C` 停止。
-- 如需重置策略记忆，先停止程序，再删除 `.arena_hero_state.json`。
-- 不要删除 `.env`，否则下次启动会重新要求输入 API key。
+容器把运行状态和训练数据统一写入 `/data` 命名卷。Linux systemd 说明见 [deploy/README.md](deploy/README.md)。
 
-## 常见问题
+## 安全与兼容性
 
-- `Python was not found`：安装 Python 3.11+ 后重新打开终端并再次运行 `setup.cmd`。
-- `HTTP 401`：检查本机 `.env` 中的 key 是否完整、有效且没有多余引号或空格。
-- 浏览器打不开：确认 `run_dashboard.cmd` 窗口仍在运行，再访问 `http://127.0.0.1:8765/`。
-- 工人没有采集：查看控制台中的可见资源、工人目标和威胁等级；进入生存姿态时会暂停远距离探索。
+项目只使用官方 SDK，不自行实现 WebSocket、重连、状态模型或命令提交协议。启动时和默认每 240 Tick 检查官方 API、规则、SDK 与已审计版本；漂移或检查失败会在 `data/runtime/state/` 写入保护报告并停止继续提交 Turn。
+
+安全报告和漏洞提交方式见 [SECURITY.md](SECURITY.md)。

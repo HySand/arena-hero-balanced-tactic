@@ -2,31 +2,35 @@
 
 ## 开发环境
 
-项目要求 Windows 和 Python 3.11 或更高版本。运行 `setup.cmd` 创建本地虚拟环境并安装依赖：
+项目要求 Python 3.11 或更高版本。Windows：
 
 ```powershell
-./setup.cmd
+./scripts/setup.cmd
 ```
 
-不要提交 `.env`、API key、运行状态、日志、虚拟环境或包含个人游戏数据的文件。
+其他系统可创建自己的虚拟环境后执行 `python -m pip install -r requirements.txt`。
+
+不要提交 `.env`、API key、`data/runtime/`、原始训练 JSONL、`data/training/source.json`、日志、虚拟环境或包含个人游戏数据的文件。
 
 ## 提交前验证
 
-运行统一验收脚本：
-
 ```powershell
-./verify.cmd
+./scripts/verify.cmd
 ```
 
-该脚本会先运行不显示匹配值的隐私与凭据扫描，再运行单元测试、Python 编译检查、依赖检查、Git 空白错误检查，并在已安装 Node.js 时检查控制台 JavaScript 语法。GitHub Actions 会在 Python 3.11 和 3.13 上重复核心检查。
+脚本会先扫描实际 Git 上传候选且不显示匹配值，再运行单元测试、Python 编译、依赖检查、Git 空白错误检查，并在已安装 Node.js 时检查控制台 JavaScript。GitHub Actions 会在 Python 3.11 和 3.13 上重复核心检查。
 
-## 修改战术
+## 修改代码
 
-- 每个 Tick 只能根据当前 `Turn` 的权威状态决策，不要复用旧的 Unit 或 Core 控制对象。
-- 规则相关数值与 SDK 接口必须以 Arena Hero 当前官方文档和官方 Python SDK 为准。
-- 修改资源、战斗、迁移、生产或安全行为时，应补充对应的回归测试。
-- 保持决策逻辑与网络连接入口分离，确保测试不需要真实 API key 或在线游戏。
+- 战术实现放在 `arena_hero_tactic/tactic/`；每个 Tick 只根据当前 `Turn` 的权威状态决策。
+- 配置字段先加入 `configuration/strategy.py` 的模型、默认值和校验。
+- 原始样本只写入 `data/training/`，可提交结果必须是匿名聚合模型。
+- 规则数值与 SDK 接口必须以当前官方契约和官方 Python SDK 为准。
+- 修改资源、战斗、迁移、生产、数据格式或安全行为时，补充对应回归测试。
+- 新代码使用规范子包导入；项目根目录的六个旧入口只用于兼容，包根目录不再增加代理模块。
+
+依赖边界见 `docs/PROJECT_STRUCTURE.md`。
 
 ## Pull Request
 
-Pull Request 应说明用户可见行为、主要实现取舍和验证结果。避免混入无关重构、生成文件或本地配置变化。
+Pull Request 应说明用户可见行为、数据格式影响、主要实现取舍和验证结果。避免混入无关重构、生成文件、本地配置或运行数据。

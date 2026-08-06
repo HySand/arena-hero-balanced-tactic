@@ -46,7 +46,7 @@
       }
     },
     "minimum_useful_utilization": 0.75,
-    "rules_basis": "Arena Hero v0.11: unharvested nodes stay put; consumed natural nodes are replaced every 4 settled ticks at deterministic random valid positions in the same 32x32 chunk"
+    "rules_basis": "Arena Hero v0.14: unharvested nodes stay put; consumed natural nodes are replaced every 4 settled ticks at deterministic random valid positions in the same 32x32 chunk"
   },
   "superseded_default": {
     "confidence": "high",
@@ -106,6 +106,7 @@
     "measurement_samples": 240,
     "minimum_outcomes": 20,
     "max_measurement_samples": 720,
+    "max_readiness_samples": 720,
     "schedule": [
       "radius-96",
       "radius-64",

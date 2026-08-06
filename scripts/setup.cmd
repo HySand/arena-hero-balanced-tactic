@@ -1,6 +1,7 @@
 @echo off
 setlocal EnableExtensions
-cd /d "%~dp0"
+for %%I in ("%~dp0..") do set "ROOT=%%~fI"
+cd /d "%ROOT%"
 
 if exist ".venv\Scripts\python.exe" (
     ".venv\Scripts\python.exe" -c "import sys, venv, ensurepip; raise SystemExit(0 if sys.version_info >= (3, 11) else 1)" >nul 2>nul
@@ -51,7 +52,7 @@ if exist ".venv\.requirements.txt" (
     fc /b "requirements.txt" ".venv\.requirements.txt" >nul 2>nul
     if errorlevel 1 set "NEEDS_INSTALL=1"
 )
-".venv\Scripts\python.exe" -c "from importlib.metadata import version; current=tuple(int(part) for part in version('arena-hero').split('.')[:3]); raise SystemExit(0 if (0, 2, 6) <= current < (0, 3, 0) else 1)" >nul 2>nul
+".venv\Scripts\python.exe" -c "from importlib.metadata import version; current=tuple(int(part) for part in version('arena-hero').split('.')[:3]); raise SystemExit(0 if (0, 2, 9) <= current < (0, 3, 0) else 1)" >nul 2>nul
 if errorlevel 1 set "NEEDS_INSTALL=1"
 
 if "%NEEDS_INSTALL%"=="1" (

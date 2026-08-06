@@ -1,0 +1,22 @@
+[Unit]
+Description=Arena Hero balanced tactic
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=%h/arena-hero-balanced-tactic-main
+EnvironmentFile=%h/arena-hero-balanced-tactic-main/.env
+Environment=ARENA_HERO_VERSION_CHECK=1
+ExecStart=/usr/bin/python3 -u -m arena_hero_tactic.tactic.engine
+Restart=on-failure
+RestartSec=15
+TimeoutStopSec=20
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=read-only
+ReadWritePaths=%h/arena-hero-balanced-tactic-main
+
+[Install]
+WantedBy=default.target

@@ -2,19 +2,42 @@
 param()
 
 $ErrorActionPreference = 'Stop'
-$projectRoot = Split-Path -Parent $MyInvocation.MyCommand.Path
+$projectRoot = Split-Path -Parent (Split-Path -Parent $MyInvocation.MyCommand.Path)
 
 Push-Location -LiteralPath $projectRoot
 try {
-    if (-not (Get-Command git -ErrorAction SilentlyContinue)) {
-        Write-Host 'Git was not found; privacy scan could not run.'
-        exit 2
-    }
-
-    $files = @(git -c core.quotepath=false ls-files --cached --others --exclude-standard)
-    if ($LASTEXITCODE -ne 0) {
-        Write-Host 'Git could not enumerate upload candidates.'
-        exit 2
+    $hasGit = (Test-Path -LiteralPath (Join-Path $projectRoot '.git')) -and $null -ne (Get-Command git -ErrorAction SilentlyContinue)
+    if ($hasGit) {
+        $files = @(git -c core.quotepath=false ls-files --cached --others --exclude-standard)
+        if ($LASTEXITCODE -ne 0) {
+            Write-Host 'Git could not enumerate upload candidates.'
+            exit 2
+        }
+    } else {
+        $excludedDirectories = @('.git', '.venv', '__pycache__', 'training_exports', 'data[\\/]runtime', 'data[\\/]training[\\/]exports')
+        $excludedGeneratedFiles = @(
+            '.arena_hero_dashboard_state.json',
+            '.arena_hero_state.json',
+            '.arena_hero_training.jsonl',
+            '.arena_hero_training_source.json',
+            '.arena_hero_version_report.json',
+            '.peace_economy_experiment_state.json',
+            '.peace_economy_telemetry.jsonl'
+        )
+        $files = @(
+            Get-ChildItem -LiteralPath $projectRoot -Recurse -File -Force |
+                Where-Object {
+                    $relative = $_.FullName.Substring($projectRoot.Length + 1)
+                    $parts = $relative -split '[\\/]'
+                    $relative -notmatch '(^|[\\/])(?:\.git|\.venv|__pycache__|training_exports|data[\\/]runtime|data[\\/]training[\\/]exports)([\\/]|$)' -and
+                    $relative -notmatch '^data[\\/]training[\\/](?:turns\.jsonl|peace_economy_telemetry\.jsonl|source\.json)(?:\.lock|\.tmp)?$' -and
+                    $_.Name -ne '.env' -and
+                    $_.Name -notin $excludedGeneratedFiles -and
+                    $_.Extension.ToLowerInvariant() -notin @('.log', '.zip', '.7z', '.rar')
+                } |
+                ForEach-Object { $_.FullName.Substring($projectRoot.Length + 1) }
+        )
+        Write-Host 'Git metadata not present; scanning release files in the project folder.'
     }
 
     $findings = [System.Collections.Generic.List[object]]::new()
@@ -126,6 +149,7 @@ try {
         }
     }
 
+    if ($hasGit) {
     $symlinks = @(git ls-files -s | Where-Object { $_ -match '^120000 ' })
     foreach ($symlink in $symlinks) {
         Add-Finding -File '<git-index>' -Line 0 -Rule 'tracked-symlink'
@@ -152,6 +176,8 @@ try {
     }
     if ($historyEmails | Where-Object { $_ -and $_ -notmatch '@users\.noreply\.github\.com$' }) {
         $warnings.Add('Existing Git history contains at least one non-noreply author email.')
+    }
+
     }
 
     $uniqueFindings = @($findings | Sort-Object File, Line, Rule -Unique)
