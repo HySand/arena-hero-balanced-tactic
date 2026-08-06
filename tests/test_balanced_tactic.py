@@ -249,6 +249,12 @@ class BalancedTacticTests(unittest.TestCase):
         )
         self.active_block_patch.start()
         self.addCleanup(self.active_block_patch.stop)
+        self.config_patch = patch(
+            "arena_hero_tactic.tactic.engine.load_strategy_config",
+            return_value=strategy_config_from_dict(default_config_dict()),
+        )
+        self.config_patch.start()
+        self.addCleanup(self.config_patch.stop)
 
     def test_neighbors_follow_direction_order(self) -> None:
         self.assertEqual(
@@ -1082,6 +1088,9 @@ class BalancedTacticTests(unittest.TestCase):
         self.assertNotIn(uid(101), memory.enemy_tracks)
 
     def test_full_population_sacrifices_far_empty_worker_and_spawns_ranger(self) -> None:
+        document = default_config_dict()
+        document["production"]["max_population"] = 19
+        config = strategy_config_from_dict(document)
         workers = [
             FakeUnit(
                 number,
@@ -1103,6 +1112,7 @@ class BalancedTacticTests(unittest.TestCase):
                 enemies=[enemy(101, (3, 0), UnitType.VANGUARD)],
             ),
             memory,
+            config,
         )
         sacrificed = [
             worker for worker in workers if worker.action == ("SELF_DESTRUCT",)
