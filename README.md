@@ -28,7 +28,7 @@
 1. 安装 Python 3.11+，并勾选 `Add python.exe to PATH`。
 2. 下载或克隆项目。
 3. 双击 `启动控制台.vbs`，也可以双击 `run_all.cmd`。
-4. 首次运行会创建 `.venv`、安装依赖并提示输入 API key。
+4. 首次运行会创建 `.venv`、安装依赖，并提示输入 API key 与网页右上角的账号名。
 5. 浏览器会打开 `http://127.0.0.1:8765/`。
 
 单独启动：
@@ -57,9 +57,10 @@ API key 写入项目根目录的 `.env`：
 
 ```text
 ARENA_HERO_API_KEY=YOUR_API_KEY
+ARENA_HERO_EXPECTED_USERNAME=YOUR_ARENA_USERNAME
 ```
 
-`.env` 已被 Git 忽略。不要把真实 key、终端截图或含凭据的压缩包提交到 GitHub。
+`.env` 已被 Git 忽略。账号校验可防止 Key 控制到另一个 Arena 账号；不匹配时战术会在提交前停止。更换 Key 请双击 `scripts/enter_api_key.cmd`，脚本会保存本地配置并自动重启战术。不要把真实 Key、终端截图或含凭据的压缩包提交到 GitHub。
 
 ## 配置
 

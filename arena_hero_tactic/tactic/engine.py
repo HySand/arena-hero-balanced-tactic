@@ -14,6 +14,7 @@ shared.
 
 from __future__ import annotations
 
+import hmac
 import json
 import os
 import time
@@ -115,6 +116,60 @@ def _normalize_api_key(raw: str) -> str:
     return api_key
 
 
+def _dotenv_credentials() -> tuple[str, str]:
+    values = _dotenv_values()
+    return (
+        values.get("ARENA_HERO_API_KEY", "").strip(),
+        values.get("ARENA_HERO_EXPECTED_USERNAME", "").strip(),
+    )
+
+
+def _credentials_match(
+    api_key: str,
+    expected_username: str,
+    configured_api_key: str,
+    configured_username: str,
+) -> bool:
+    return hmac.compare_digest(
+        api_key.encode("utf-8"),
+        configured_api_key.encode("utf-8"),
+    ) and (
+        expected_username.casefold() == configured_username.casefold()
+    )
+
+
+def _watch_dotenv_credentials(api_key: str, expected_username: str) -> bool:
+    configured_api_key, configured_username = _dotenv_credentials()
+    return bool(configured_api_key) and _credentials_match(
+        api_key,
+        expected_username,
+        configured_api_key,
+        configured_username,
+    )
+
+
+def _dotenv_credentials_changed(api_key: str, expected_username: str) -> bool:
+    configured_api_key, configured_username = _dotenv_credentials()
+    if not configured_api_key:
+        return False
+    return not _credentials_match(
+        api_key,
+        expected_username,
+        configured_api_key,
+        configured_username,
+    )
+
+
+def _expected_owner_matches(turn: Turn, expected_username: str) -> bool | None:
+    if not expected_username:
+        return True
+    core = getattr(turn, "core", None)
+    owner_username = str(getattr(core, "owner_username", "") or "").strip()
+    if not owner_username:
+        return None
+    return owner_username.casefold() == expected_username.casefold()
+
+
 # --------------------------------------------------------------------------
 # Profile switch
 # --------------------------------------------------------------------------
@@ -128,6 +183,7 @@ DEBUG_TURNS = _setting("TACTIC_DEBUG", "1").strip().lower() not in {
     "off",
     "",
 }
+EXPECTED_USERNAME = _setting("ARENA_HERO_EXPECTED_USERNAME", "").strip()
 # --------------------------------------------------------------------------
 # Tunables
 # --------------------------------------------------------------------------
@@ -4518,6 +4574,10 @@ def _report_version_hold(report: dict[str, object], marker: Path) -> None:
 
 def _play_locked(api_key: str) -> None:
     memory = TacticMemory.load(STATE_FILE)
+    watch_dotenv_credentials = _watch_dotenv_credentials(
+        api_key,
+        EXPECTED_USERNAME,
+    )
     marker_path, report_path = _version_check_paths()
     next_version_check_tick: int | None = None
     if VERSION_CHECK_ENABLED:
@@ -4532,6 +4592,19 @@ def _play_locked(api_key: str) -> None:
 
     with ArenaHeroClient(api_key=api_key) as game:
         for turn in game.turns():
+            if watch_dotenv_credentials and _dotenv_credentials_changed(
+                api_key,
+                EXPECTED_USERNAME,
+            ):
+                print("credential_config_changed=restarting", flush=True)
+                break
+            owner_matches = _expected_owner_matches(turn, EXPECTED_USERNAME)
+            if owner_matches is False:
+                print(
+                    "account_verification_failed=api_key_owner_mismatch",
+                    flush=True,
+                )
+                break
             if VERSION_CHECK_ENABLED and (
                 next_version_check_tick is None
                 or turn.tick >= next_version_check_tick

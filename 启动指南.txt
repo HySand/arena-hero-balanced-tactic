@@ -6,11 +6,12 @@ Arena Hero 一键启动
 启动器会：
 1. 后台启动 tactic 和 dashboard，不弹出命令行窗口。
 2. 自动检测已经运行的实例，避免重复启动和锁冲突。
-3. 第一次没有 API key 时弹出输入框并保存到本地 .env。
+3. 第一次没有 API key 时，要求同时输入 Key 和网页右上角账号名并保存到本地 .env。
 4. 等待控制网页就绪后打开浏览器。
 5. 把日志统一写入 data\runtime\logs。
 
 网页地址：http://127.0.0.1:8765/
+更换 Key：双击 scripts\enter_api_key.cmd，保存后战术会自动重启；账号不匹配时拒绝提交。
 单独启动：scripts\run_tactic.cmd 或 scripts\run_dashboard.cmd
 停止运行：在单独启动窗口按 Ctrl+C；隐藏启动时在任务管理器结束对应 Python 进程。
 策略参数：在网页控制面板修改并保存，通常从下一个 Tick 生效。
