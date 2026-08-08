@@ -31,6 +31,7 @@
           <span class="connection-dot"></span>
           <span id="connectionText">等待战术状态</span>
         </div>
+        <a class="button operation-button" href="https://app.arenahero.io/arena" target="_blank" rel="noopener noreferrer" title="打开官方 Arena 手动操作台">对局操作 ↗</a>
         <button class="button ghost" id="refreshButton" type="button">刷新</button>
         <button class="button primary" id="saveButton" type="button">保存并热加载</button>
       </div>
@@ -305,6 +306,63 @@
         </section>
 
         <aside class="status-column" aria-label="实时状态">
+          <article class="panel operation-panel">
+            <div class="panel-heading small">
+              <div><p class="eyebrow">MATCH CONTROL</p><h2>对局操作</h2></div>
+              <span class="operation-badge" id="operationMode">等待连接</span>
+            </div>
+            <p class="card-hint" id="operationHint">选择一个对象，指令会在下一个可用 Tick 覆盖它的自动动作一次。</p>
+
+            <div class="control-form">
+              <label class="field control-target-field">
+                <span>控制对象</span>
+                <select id="controlTarget"><option value="">等待实时单位</option></select>
+              </label>
+              <label class="field">
+                <span>动作</span>
+                <select id="controlAction"><option value="WAIT">待命</option></select>
+              </label>
+            </div>
+
+            <div class="control-parameter" id="controlDirectionGroup">
+              <span class="control-label">方向</span>
+              <div class="direction-pad" role="group" aria-label="动作方向">
+                <button class="direction-button" type="button" data-control-direction="UP" title="向上">↑</button>
+                <button class="direction-button" type="button" data-control-direction="LEFT" title="向左">←</button>
+                <button class="direction-button" type="button" data-control-direction="DOWN" title="向下">↓</button>
+                <button class="direction-button" type="button" data-control-direction="RIGHT" title="向右">→</button>
+              </div>
+            </div>
+
+            <label class="field control-parameter" id="controlSpawnGroup" hidden>
+              <span>生产单位</span>
+              <select id="controlSpawnType">
+                <option value="WORKER">工人</option>
+                <option value="VANGUARD">先锋</option>
+                <option value="RANGER">游侠</option>
+              </select>
+            </label>
+
+            <label class="field control-parameter" id="controlShootGroup" hidden>
+              <span>射击目标</span>
+              <select id="controlEnemy"><option value="">当前没有可见敌人</option></select>
+            </label>
+
+            <div class="control-submit-row">
+              <button class="button primary" id="sendControlButton" type="button">发送一次性指令</button>
+              <button class="button ghost" id="clearControlButton" type="button">撤销待执行</button>
+            </div>
+
+            <div class="control-feedback">
+              <div><span>队列</span><strong id="controlQueueStatus">无待执行指令</strong></div>
+              <div><span>最近回执</span><strong id="controlReceipt">尚未发送</strong></div>
+            </div>
+            <div class="operation-meta">
+              <a href="https://app.arenahero.io/arena" target="_blank" rel="noopener noreferrer">官方 Arena ↗</a>
+              <strong id="operationSource">AGENT 自动计划</strong>
+            </div>
+          </article>
+
           <article class="panel sticky-panel">
             <div class="panel-heading">
               <div><p class="eyebrow">LIVE FLEET</p><h2>舰队状态</h2></div>

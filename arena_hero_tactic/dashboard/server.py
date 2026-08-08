@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import ipaddress
 import mimetypes
 import time
 import webbrowser
@@ -14,6 +15,13 @@ from typing import Any
 from urllib.parse import urlsplit
 
 from .state import STATUS_FILE
+from .control import (
+    ControlCommandError,
+    clear_control_commands,
+    load_control_receipt,
+    pending_control_commands,
+    queue_control_command,
+)
 from ..runtime.process_lock import InstanceAlreadyRunning, SingleInstanceLock
 from ..configuration.strategy import (
     CONFIG_FILE,
@@ -25,7 +33,12 @@ from ..configuration.strategy import (
 )
 
 
-from ..runtime.paths import DASHBOARD_LOCK_FILE, STATIC_DIR
+from ..runtime.paths import (
+    CONTROL_DIR,
+    CONTROL_RECEIPT_FILE,
+    DASHBOARD_LOCK_FILE,
+    STATIC_DIR,
+)
 MAX_REQUEST_BYTES = 64 * 1024
 ONLINE_GRACE_SECONDS = 90
 
@@ -47,10 +60,14 @@ class TacticDashboardServer(ThreadingHTTPServer):
         *,
         config_path: Path = CONFIG_FILE,
         status_path: Path = STATUS_FILE,
+        control_dir: Path = CONTROL_DIR,
+        control_receipt_path: Path = CONTROL_RECEIPT_FILE,
         static_dir: Path = STATIC_DIR,
     ) -> None:
         self.config_path = config_path
         self.status_path = status_path
+        self.control_dir = control_dir
+        self.control_receipt_path = control_receipt_path
         self.static_dir = static_dir
         super().__init__(server_address, TacticDashboardHandler)
 
@@ -109,7 +126,7 @@ class TacticDashboardHandler(BaseHTTPRequestHandler):
 
     def do_OPTIONS(self) -> None:  # noqa: N802 - stdlib handler contract
         self.send_response(HTTPStatus.NO_CONTENT)
-        self.send_header("Allow", "GET, PUT, OPTIONS")
+        self.send_header("Allow", "GET, POST, PUT, DELETE, OPTIONS")
         self.send_header("Content-Length", "0")
         self.end_headers()
 
@@ -132,7 +149,81 @@ class TacticDashboardHandler(BaseHTTPRequestHandler):
         if path == "/api/status":
             self._send_status()
             return
+        if path == "/api/control":
+            self._send_control_queue()
+            return
         self._send_static(path)
+
+    def _loopback_only(self) -> bool:
+        try:
+            return ipaddress.ip_address(self.client_address[0]).is_loopback
+        except ValueError:
+            return False
+
+    def _send_control_queue(self) -> None:
+        if not self._loopback_only():
+            self._send_error_json(HTTPStatus.FORBIDDEN, "control is local-only")
+            return
+        self._send_json(
+            HTTPStatus.OK,
+            {
+                "ok": True,
+                "pending": pending_control_commands(self.server.control_dir),
+                "last_receipt": load_control_receipt(self.server.control_receipt_path),
+            },
+        )
+
+    def _read_json_body(self) -> dict[str, Any]:
+        if self.headers.get_content_type() != "application/json":
+            raise ControlCommandError("Content-Type must be application/json")
+        raw_length = self.headers.get("Content-Length")
+        try:
+            length = int(raw_length or "0")
+        except ValueError as error:
+            raise ControlCommandError("invalid Content-Length") from error
+        if not 0 < length <= MAX_REQUEST_BYTES:
+            raise ControlCommandError("request body must be between 1 byte and 64 KiB")
+        try:
+            document = json.loads(self.rfile.read(length).decode("utf-8"))
+        except UnicodeDecodeError as error:
+            raise ControlCommandError("body must be UTF-8") from error
+        except json.JSONDecodeError as error:
+            raise ControlCommandError(
+                f"invalid JSON at line {error.lineno} column {error.colno}"
+            ) from error
+        if not isinstance(document, dict):
+            raise ControlCommandError("body must be a JSON object")
+        return document
+
+    def do_POST(self) -> None:  # noqa: N802 - stdlib handler contract
+        if self._path() != "/api/control":
+            self._send_error_json(HTTPStatus.NOT_FOUND, "endpoint not found")
+            return
+        if not self._loopback_only():
+            self._send_error_json(HTTPStatus.FORBIDDEN, "control is local-only")
+            return
+        try:
+            command = queue_control_command(
+                self._read_json_body(),
+                self.server.control_dir,
+            )
+        except ControlCommandError as error:
+            self._send_error_json(HTTPStatus.UNPROCESSABLE_ENTITY, str(error))
+            return
+        self._send_json(
+            HTTPStatus.ACCEPTED,
+            {"ok": True, "message": "指令已排队，将在下一个可用 Tick 覆盖目标动作", "command": command},
+        )
+
+    def do_DELETE(self) -> None:  # noqa: N802 - stdlib handler contract
+        if self._path() != "/api/control":
+            self._send_error_json(HTTPStatus.NOT_FOUND, "endpoint not found")
+            return
+        if not self._loopback_only():
+            self._send_error_json(HTTPStatus.FORBIDDEN, "control is local-only")
+            return
+        removed = clear_control_commands(self.server.control_dir)
+        self._send_json(HTTPStatus.OK, {"ok": True, "removed": removed})
 
     def do_PUT(self) -> None:  # noqa: N802 - stdlib handler contract
         if self._path() != "/api/config":
@@ -240,12 +331,16 @@ def create_server(
     *,
     config_path: Path = CONFIG_FILE,
     status_path: Path = STATUS_FILE,
+    control_dir: Path = CONTROL_DIR,
+    control_receipt_path: Path = CONTROL_RECEIPT_FILE,
     static_dir: Path = STATIC_DIR,
 ) -> TacticDashboardServer:
     return TacticDashboardServer(
         (host, port),
         config_path=config_path,
         status_path=status_path,
+        control_dir=control_dir,
+        control_receipt_path=control_receipt_path,
         static_dir=static_dir,
     )
 

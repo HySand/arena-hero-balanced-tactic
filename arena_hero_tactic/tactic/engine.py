@@ -41,6 +41,7 @@ from arena_hero import (
 )
 
 from ..dashboard.state import write_dashboard_state
+from ..dashboard.control import apply_control_commands
 from ..runtime.version_monitor import (
     DEFAULT_MARKER_PATH,
     DEFAULT_REPORT_PATH,
@@ -57,6 +58,8 @@ from ..configuration.strategy import StrategyConfig, load_strategy_config
 from ..training.dataset import record_accepted_turn as record_training_turn
 from ..runtime.paths import (
     DASHBOARD_STATE_FILE,
+    CONTROL_DIR,
+    CONTROL_RECEIPT_FILE,
     ENV_FILE,
     STATE_FILE,
     TACTIC_LOCK_FILE,
@@ -4628,6 +4631,7 @@ def _play_locked(api_key: str) -> None:
             config = load_strategy_config()
             decision_started = time.perf_counter()
             choose_actions(turn, memory, config)
+            apply_control_commands(turn, CONTROL_DIR, CONTROL_RECEIPT_FILE)
             decision_ms = (time.perf_counter() - decision_started) * 1000.0
             _print_turn_debug(turn, memory, config)
             try:

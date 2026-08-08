@@ -56,6 +56,15 @@ if ($expectedUsername -match '[\x00-\x1F\x7F]') {
     Write-Host 'The Arena Hero username contains unsupported control characters.'
     exit 5
 }
+if (($expectedUsername -ceq $key) -or ($expectedUsername -match '^ah_(?:live|test|dev)_')) {
+    $buttons = [Microsoft.VisualBasic.MsgBoxStyle]::OkOnly -bor [Microsoft.VisualBasic.MsgBoxStyle]::Exclamation
+    [Microsoft.VisualBasic.Interaction]::MsgBox(
+        'That value looks like an API key. Enter the Arena Hero username shown in the account menu instead.',
+        $buttons,
+        'Arena Hero Account Check'
+    ) | Out-Null
+    exit 9
+}
 
 $foundKey = $false
 $foundUsername = $false

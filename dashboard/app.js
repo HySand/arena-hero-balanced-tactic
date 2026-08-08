@@ -6,6 +6,47 @@ const UNIT_META = {
   RANGER: { glyph: "R", name: "游侠", cost: 12 },
 };
 
+const CONTROL_ACTION_OPTIONS = {
+  CORE: [
+    ["WAIT", "待命"],
+    ["SPAWN", "生产单位"],
+    ["REPAIR_SHIELD", "修复护盾"],
+    ["START_MOVE", "开始迁移"],
+    ["CANCEL_MOVE", "取消迁移"],
+    ["PICKUP_BEACON", "拾取 Beacon"],
+    ["DROP_BEACON", "放下 Beacon"],
+  ],
+  WORKER: [
+    ["MOVE", "移动"],
+    ["HARVEST", "采集"],
+    ["DEPOSIT", "交付资源"],
+    ["WAIT", "待命"],
+    ["PICKUP_BEACON", "拾取 Beacon"],
+    ["DROP_BEACON", "放下 Beacon"],
+  ],
+  VANGUARD: [
+    ["MOVE", "移动"],
+    ["SWEEP", "横扫"],
+    ["WAIT", "待命"],
+    ["PICKUP_BEACON", "拾取 Beacon"],
+    ["DROP_BEACON", "放下 Beacon"],
+  ],
+  RANGER: [
+    ["MOVE", "移动"],
+    ["SHOOT", "射击可见目标"],
+    ["WAIT", "待命"],
+    ["PICKUP_BEACON", "拾取 Beacon"],
+    ["DROP_BEACON", "放下 Beacon"],
+  ],
+};
+
+const CONTROL_RECEIPT_NAMES = {
+  applied: "已执行",
+  rejected: "已拒绝",
+  expired: "已过期",
+  superseded: "已被更新指令替换",
+};
+
 const ADAPTIVE_ACTION_NAMES = {
   WARMUP: "收集样本",
   COOLDOWN: "冷却观察",
@@ -38,6 +79,8 @@ const state = {
   dirty: false,
   filter: "ALL",
   draggedIndex: null,
+  controlDirection: "UP",
+  controlQueue: { pending: [], last_receipt: null },
 };
 
 const THEME_STORAGE_KEY = "arenaHeroTheme";
@@ -585,9 +628,19 @@ function bindStaticControls() {
   $("dockSaveButton").addEventListener("click", saveConfig);
   $("resetButton").addEventListener("click", resetConfig);
   $("refreshButton").addEventListener("click", async () => {
-    await Promise.all([loadConfig(), refreshStatus()]);
+    await Promise.all([loadConfig(), refreshStatus(), refreshControlStatus()]);
     showToast("已从磁盘刷新");
   });
+  $("controlTarget").addEventListener("change", updateControlActions);
+  $("controlAction").addEventListener("change", updateControlParameters);
+  document.querySelectorAll("[data-control-direction]").forEach((button) => {
+    button.addEventListener("click", () => {
+      state.controlDirection = button.dataset.controlDirection;
+      renderDirectionButtons();
+    });
+  });
+  $("sendControlButton").addEventListener("click", sendControlCommand);
+  $("clearControlButton").addEventListener("click", clearControlQueue);
   document.querySelectorAll(".filter").forEach((button) => {
     button.addEventListener("click", () => {
       state.filter = button.dataset.filter;
@@ -827,11 +880,233 @@ function renderStatus() {
   const map = status?.map_memory || {};
   $("metricPhaseNote").textContent = `矿 ${effectiveRadius}/${radiusLimit} · 探 ${status?.exploration_radius ?? "—"} · 地图 ${map.known_cells ?? 0} 格 / ${map.obstacles ?? 0} 障碍`;
 
+  renderOperation();
+
   renderCore();
   renderUnits();
   renderResources();
   renderEvents();
   updateProductionSummary();
+}
+
+function renderOperation() {
+  const status = state.status;
+  const online = Boolean(status?.online);
+  const accepted = Boolean(status?.accepted);
+  const mode = $("operationMode");
+  const hint = $("operationHint");
+  const source = $("operationSource");
+  mode.textContent = online ? "Agent 在线" : "Agent 离线";
+  mode.classList.toggle("online", online);
+  source.textContent = accepted
+    ? `AGENT 自动计划 · Tick ${status?.tick ?? "—"}`
+    : "AGENT 等待下一次计划";
+  hint.textContent = online
+    ? "选择一个对象，指令会在下一个可用 Tick 覆盖它的自动动作一次。"
+    : "本地战术未在线，启动 tactic 后才能发送机器人指令。";
+  renderControlTargets();
+  renderControlQueue();
+}
+
+function selectedControlTarget() {
+  const option = $("controlTarget").selectedOptions[0];
+  if (!option?.dataset.targetId) return null;
+  return {
+    value: option.value,
+    targetType: option.dataset.targetType,
+    targetId: option.dataset.targetId,
+    unitType: option.dataset.unitType || null,
+  };
+}
+
+function renderControlTargets() {
+  const select = $("controlTarget");
+  const previous = select.value;
+  select.replaceChildren();
+  const status = state.status;
+  if (status?.core) {
+    const option = document.createElement("option");
+    option.value = `CORE:${status.core.id}`;
+    option.dataset.targetType = "CORE";
+    option.dataset.targetId = status.core.id;
+    option.textContent = `Core ${status.core.id.slice(0, 8)} · ${formatPosition(status.core.position)}`;
+    select.append(option);
+  }
+  const units = status?.units || [];
+  ["WORKER", "VANGUARD", "RANGER"].forEach((unitType) => {
+    const matching = units.filter((unit) => unit.unit_type === unitType);
+    if (!matching.length) return;
+    const group = document.createElement("optgroup");
+    group.label = UNIT_META[unitType].name;
+    matching.forEach((unit) => {
+      const option = document.createElement("option");
+      option.value = `UNIT:${unit.id}`;
+      option.dataset.targetType = "UNIT";
+      option.dataset.targetId = unit.id;
+      option.dataset.unitType = unit.unit_type;
+      option.textContent = `${UNIT_META[unitType].name} ${unit.short_id} · ${formatPosition(unit.position)}`;
+      group.append(option);
+    });
+    select.append(group);
+  });
+  if (!select.options.length) {
+    const option = document.createElement("option");
+    option.value = "";
+    option.textContent = "等待实时单位";
+    select.append(option);
+  } else if ([...select.options].some((option) => option.value === previous)) {
+    select.value = previous;
+  }
+  updateControlActions();
+}
+
+function updateControlActions() {
+  const target = selectedControlTarget();
+  const select = $("controlAction");
+  const previous = select.value;
+  select.replaceChildren();
+  const type = target?.targetType === "CORE" ? "CORE" : target?.unitType;
+  const actions = CONTROL_ACTION_OPTIONS[type] || [["WAIT", "待命"]];
+  actions.forEach(([value, label]) => {
+    const option = document.createElement("option");
+    option.value = value;
+    option.textContent = label;
+    select.append(option);
+  });
+  if (actions.some(([value]) => value === previous)) select.value = previous;
+  updateControlParameters();
+}
+
+function renderDirectionButtons() {
+  document.querySelectorAll("[data-control-direction]").forEach((button) => {
+    button.classList.toggle("active", button.dataset.controlDirection === state.controlDirection);
+    button.setAttribute("aria-pressed", button.classList.contains("active") ? "true" : "false");
+  });
+}
+
+function renderControlEnemies() {
+  const select = $("controlEnemy");
+  const previous = select.value;
+  select.replaceChildren();
+  const enemies = state.status?.visible_enemies || [];
+  enemies.forEach((enemy) => {
+    const option = document.createElement("option");
+    option.value = enemy.id;
+    option.dataset.enemyId = enemy.id;
+    option.dataset.x = String(enemy.position?.[0] ?? 0);
+    option.dataset.y = String(enemy.position?.[1] ?? 0);
+    const name = enemy.kind === "CORE"
+      ? "敌方 Core"
+      : `敌方 ${UNIT_META[enemy.unit_type]?.name || enemy.unit_type || "单位"}`;
+    option.textContent = `${name} ${enemy.short_id} · ${formatPosition(enemy.position)}`;
+    select.append(option);
+  });
+  if (!select.options.length) {
+    const option = document.createElement("option");
+    option.value = "";
+    option.textContent = "当前没有可见敌人";
+    select.append(option);
+  } else if ([...select.options].some((option) => option.value === previous)) {
+    select.value = previous;
+  }
+}
+
+function updateControlParameters() {
+  const action = $("controlAction").value;
+  $("controlDirectionGroup").hidden = !["MOVE", "SWEEP", "START_MOVE"].includes(action);
+  $("controlSpawnGroup").hidden = action !== "SPAWN";
+  $("controlShootGroup").hidden = action !== "SHOOT";
+  if (action === "SHOOT") renderControlEnemies();
+  renderDirectionButtons();
+  const target = selectedControlTarget();
+  $("sendControlButton").disabled = !state.status?.online
+    || !target
+    || (action === "SHOOT" && !$("controlEnemy").value);
+}
+
+async function sendControlCommand() {
+  const target = selectedControlTarget();
+  const tick = Number(state.status?.tick);
+  if (!target || !Number.isInteger(tick) || tick < 1) {
+    showToast("没有可用的实时目标", true);
+    return;
+  }
+  const action = $("controlAction").value;
+  const command = {
+    target_type: target.targetType,
+    target_id: target.targetId,
+    action,
+    observed_tick: tick,
+  };
+  if (["MOVE", "SWEEP", "START_MOVE"].includes(action)) {
+    command.direction = state.controlDirection;
+  } else if (action === "SPAWN") {
+    command.unit_type = $("controlSpawnType").value;
+  } else if (action === "SHOOT") {
+    const enemy = $("controlEnemy").selectedOptions[0];
+    if (!enemy?.dataset.enemyId) {
+      showToast("当前没有可射击的可见目标", true);
+      return;
+    }
+    command.enemy_id = enemy.dataset.enemyId;
+    command.expected_cell = [Number(enemy.dataset.x), Number(enemy.dataset.y)];
+  }
+  const button = $("sendControlButton");
+  button.disabled = true;
+  try {
+    const result = await requestJSON("/api/control", {
+      method: "POST",
+      body: JSON.stringify(command),
+    });
+    showToast(result.message || "指令已排队");
+    await refreshControlStatus();
+  } catch (error) {
+    showToast(`发送失败：${error.message}`, true);
+  } finally {
+    updateControlParameters();
+  }
+}
+
+async function clearControlQueue() {
+  try {
+    const result = await requestJSON("/api/control", { method: "DELETE" });
+    showToast(result.removed ? `已撤销 ${result.removed} 条待执行指令` : "没有待执行指令");
+    await refreshControlStatus();
+  } catch (error) {
+    showToast(`撤销失败：${error.message}`, true);
+  }
+}
+
+function renderControlQueue() {
+  const queue = state.controlQueue || { pending: [], last_receipt: null };
+  const pending = queue.pending || [];
+  $("controlQueueStatus").textContent = pending.length
+    ? `待执行 ${pending.length} 条`
+    : "无待执行指令";
+  const receipt = queue.last_receipt;
+  $("controlReceipt").textContent = receipt
+    ? `${CONTROL_RECEIPT_NAMES[receipt.status] || receipt.status} · ${receipt.action || "—"} · Tick ${receipt.applied_tick ?? "—"}`
+    : "尚未发送";
+  $("clearControlButton").disabled = pending.length === 0;
+}
+
+async function refreshControlStatus() {
+  try {
+    state.controlQueue = await requestJSON("/api/control");
+  } catch (error) {
+    state.controlQueue = { pending: [], last_receipt: null, error: error.message };
+  }
+  renderControlQueue();
+}
+
+function selectControlTarget(targetType, targetId) {
+  const select = $("controlTarget");
+  const value = `${targetType}:${targetId}`;
+  if (![...select.options].some((option) => option.value === value)) return;
+  select.value = value;
+  updateControlActions();
+  $("controlTarget").focus();
+  $("controlTarget").scrollIntoView({ behavior: "smooth", block: "center" });
 }
 
 function renderCore() {
@@ -864,7 +1139,12 @@ function renderCore() {
   position.textContent = `${formatPosition(core.position)}${core.destination ? ` → ${formatPosition(core.destination)}` : ""}`;
   const action = document.createElement("span");
   action.textContent = core.action || "WAIT";
-  second.append(position, action);
+  const control = document.createElement("button");
+  control.type = "button";
+  control.className = "unit-control-button";
+  control.textContent = "操控";
+  control.addEventListener("click", () => selectControlTarget("CORE", core.id));
+  second.append(position, action, control);
   container.append(first, second);
 }
 
@@ -904,7 +1184,12 @@ function renderUnits() {
     resource.textContent = unit.resource_target ? `矿 ${formatPosition(unit.resource_target)}` : "";
     const scout = document.createElement("span");
     scout.textContent = unit.scout_target ? `目标 ${formatPosition(unit.scout_target)}` : "";
-    foot.append(resource, scout);
+    const control = document.createElement("button");
+    control.type = "button";
+    control.className = "unit-control-button";
+    control.textContent = "操控";
+    control.addEventListener("click", () => selectControlTarget("UNIT", unit.id));
+    foot.append(resource, scout, control);
     card.append(head, role, action, foot);
     list.append(card);
   });
@@ -988,8 +1273,11 @@ async function refreshStatus() {
 async function init() {
   bindStaticControls();
   loadTheme();
-  await Promise.all([loadConfig(), refreshStatus()]);
-  setInterval(refreshStatus, 2500);
+  await Promise.all([loadConfig(), refreshStatus(), refreshControlStatus()]);
+  setInterval(() => {
+    refreshStatus();
+    refreshControlStatus();
+  }, 2500);
 }
 
 init();

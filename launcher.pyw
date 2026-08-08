@@ -19,12 +19,14 @@ ROOT = Path(__file__).resolve().parent
 PYTHONW = ROOT / ".venv" / "Scripts" / "pythonw.exe"
 PYTHON = ROOT / ".venv" / "Scripts" / "python.exe"
 DASHBOARD_URL = "http://127.0.0.1:8765/"
+OFFICIAL_ARENA_URL = "https://app.arenahero.io/arena"
 DASHBOARD_HEALTH_URL = f"{DASHBOARD_URL}api/health"
 TACTIC_LOCK = ROOT / "data" / "runtime" / "locks" / "tactic.lock"
 DASHBOARD_LOCK = ROOT / "data" / "runtime" / "locks" / "dashboard.lock"
 API_KEY_FILE = ROOT / ".env"
 API_KEY_PROMPT = ROOT / "scripts" / "enter_api_key.ps1"
 CREATE_NO_WINDOW = getattr(subprocess, "CREATE_NO_WINDOW", 0x08000000)
+SERVICE_READY_CHECKS = 4
 
 
 def _message(title: str, message: str, *, error: bool = False) -> None:
@@ -181,11 +183,24 @@ def _ensure_services(api_key: str) -> bool:
             api_key=api_key,
         )
     deadline = time.monotonic() + 30.0
+    ready_checks = 0
     while time.monotonic() < deadline:
-        if _dashboard_online():
-            return True
+        if _dashboard_online() and _lock_active(TACTIC_LOCK):
+            ready_checks += 1
+            if ready_checks >= SERVICE_READY_CHECKS:
+                return True
+        else:
+            ready_checks = 0
         time.sleep(0.5)
-    return _dashboard_online()
+    return _dashboard_online() and _lock_active(TACTIC_LOCK)
+
+
+def _open_control_pages() -> None:
+    """Open both local strategy controls and the official manual arena view."""
+
+    webbrowser.open(DASHBOARD_URL)
+    time.sleep(0.2)
+    webbrowser.open(OFFICIAL_ARENA_URL)
 
 
 def _check() -> int:
@@ -219,7 +234,7 @@ def main() -> int:
                 error=True,
             )
             return 1
-    webbrowser.open(DASHBOARD_URL)
+    _open_control_pages()
     return 0
 
 

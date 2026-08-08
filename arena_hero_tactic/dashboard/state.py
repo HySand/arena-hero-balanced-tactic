@@ -159,6 +159,23 @@ def build_dashboard_state(
     }
     resources = int(getattr(turn, "resources", 0))
     resource_space = int(getattr(turn, "resource_space", 0))
+    visible_enemies = []
+    for enemy in getattr(turn, "visible_enemies", ()):
+        kind = str(getattr(enemy, "kind", "UNIT")).upper()
+        unit_type = getattr(enemy, "unit_type", None)
+        visible_enemies.append(
+            {
+                "id": str(enemy.id),
+                "short_id": str(enemy.id)[:8],
+                "kind": kind,
+                "unit_type": None
+                if unit_type is None
+                else str(_enum_value(unit_type)).upper(),
+                "position": _position(getattr(enemy, "position", None)),
+                "hp": getattr(enemy, "hp", None),
+                "shield": getattr(enemy, "shield", None),
+            }
+        )
     return {
         "version": STATUS_VERSION,
         "updated_at": time.time(),
@@ -199,7 +216,8 @@ def build_dashboard_state(
             "move_required_ticks": getattr(core_view, "move_required_ticks", None),
             "action": _format_action(core_action),
         },
-        "visible_enemy_count": len(getattr(turn, "visible_enemies", ())),
+        "visible_enemy_count": len(visible_enemies),
+        "visible_enemies": visible_enemies,
         "visible_resources": [
             list(cell) for cell in sorted(getattr(turn, "resource_cells", ()))
         ],

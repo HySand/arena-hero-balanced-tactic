@@ -13,6 +13,8 @@ RUNTIME_DIR = DATA_DIR / "runtime"
 STATE_DIR = RUNTIME_DIR / "state"
 LOCK_DIR = RUNTIME_DIR / "locks"
 LOG_DIR = RUNTIME_DIR / "logs"
+CONTROL_DIR = RUNTIME_DIR / "control"
+CONTROL_RECEIPT_FILE = STATE_DIR / "control_receipt.json"
 TRAINING_DIR = DATA_DIR / "training"
 EXPORT_DIR = TRAINING_DIR / "exports"
 MODEL_DIR = DATA_DIR / "models"
@@ -115,6 +117,7 @@ def ensure_data_dirs() -> None:
         STATE_DIR,
         LOCK_DIR,
         LOG_DIR,
+        CONTROL_DIR,
         TRAINING_DIR,
         EXPORT_DIR,
         MODEL_DIR,
