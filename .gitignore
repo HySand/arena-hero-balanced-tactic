@@ -75,3 +75,14 @@ theme-*.png
 *.rar
 *.tar
 *.tar.gz
+
+# Cloudflare Worker local state and dependencies
+node_modules/
+worker/node_modules/
+.wrangler/
+worker/.wrangler/
+coverage/
+worker/coverage/
+.dev.vars*
+worker/.dev.vars*
+!worker/.dev.vars.example

@@ -172,6 +172,15 @@ docker compose up --build -d
 
 容器把运行状态和训练数据统一写入 `/data` 命名卷。Linux systemd 说明见 [deploy/README.md](deploy/README.md)。
 
+Cloudflare Worker 版本位于独立的 `worker/` 子项目，可用以下命令验证或部署：
+
+```powershell
+./scripts/deploy-worker.ps1 -DryRun
+./scripts/deploy-worker.ps1
+```
+
+macOS/Linux 使用 `./scripts/deploy-worker.sh`。完整配置、Secrets 和控制接口见 [worker/README.md](worker/README.md)。`.github/workflows/sync-upstream.yml` 每 6 小时合并一次 `jinlingyuan123/arena-hero-balanced-tactic:main`；同步采用 merge 并保护 Worker 专属路径，普通上游变更会先通过独立 Worker 检查，再推送到 `main`；部署工作流会自动检测该变更并重新部署，无需人工修改 Worker 代码。只有专属路径冲突或检查失败时才停止同步。
+
 ## 安全与兼容性
 
 项目只使用官方 SDK，不自行实现 WebSocket、重连、状态模型或命令提交协议。启动时和默认每 240 Tick 检查官方 API、规则、SDK 与已审计版本；漂移或检查失败会在 `data/runtime/state/` 写入保护报告并停止继续提交 Turn。

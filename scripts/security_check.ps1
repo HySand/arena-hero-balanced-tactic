@@ -132,7 +132,10 @@ try {
         for ($index = 0; $index -lt $lines.Length; $index++) {
             $line = $lines[$index]
             foreach ($rule in $rules) {
-                if ($rule.Regex.IsMatch($line)) {
+                $generatedLockEmail =
+                    $rule.Name -eq 'email-address' -and
+                    $fileName -in @('package-lock.json', 'npm-shrinkwrap.json')
+                if (-not $generatedLockEmail -and $rule.Regex.IsMatch($line)) {
                     Add-Finding -File $relativePath -Line ($index + 1) -Rule $rule.Name
                 }
             }

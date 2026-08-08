@@ -1,0 +1,78 @@
+name: Sync Upstream
+
+on:
+  schedule:
+    - cron: "23 */6 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: sync-upstream-main
+  cancel-in-progress: false
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Check out fork main
+        uses: actions/checkout@v7
+        with:
+          ref: main
+          fetch-depth: 0
+          token: ${{ secrets.UPSTREAM_SYNC_TOKEN }}
+
+      - name: Merge upstream main
+        id: sync
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git remote remove upstream 2>/dev/null || true
+          git remote add upstream https://github.com/jinlingyuan123/arena-hero-balanced-tactic.git
+          git fetch --no-tags upstream main
+
+          if git merge-base --is-ancestor upstream/main HEAD; then
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          merge_base=$(git merge-base HEAD upstream/main)
+          protected_changes=$(git diff --name-only "$merge_base" upstream/main -- \
+            worker \
+            scripts/deploy-worker.ps1 \
+            scripts/deploy-worker.sh \
+            .github/workflows/deploy-worker.yml \
+            .github/workflows/sync-upstream.yml)
+          if [[ -n "$protected_changes" ]]; then
+            echo "Upstream changed Worker-owned paths:" >&2
+            echo "$protected_changes" >&2
+            exit 1
+          fi
+
+          if ! git merge --no-edit upstream/main; then
+            conflicts=$(git diff --name-only --diff-filter=U || true)
+            git merge --abort || true
+            echo "Upstream merge has conflicts:" >&2
+            echo "$conflicts" >&2
+            exit 1
+          fi
+
+          echo "changed=true" >> "$GITHUB_OUTPUT"
+
+      - name: Install Worker dependencies
+        if: steps.sync.outputs.changed == 'true'
+        run: npm ci
+        working-directory: worker
+
+      - name: Verify Worker after merge
+        if: steps.sync.outputs.changed == 'true'
+        run: npm run check
+        working-directory: worker
+
+      - name: Push synchronized main
+        if: steps.sync.outputs.changed == 'true'
+        run: git push origin HEAD:main
