@@ -1,9 +1,19 @@
 import { DurableObject } from "cloudflare:workers";
 
-import type { CommandPlan, ReceivedData, StrategyMemory } from "./contracts";
+import type {
+  CommandPlan,
+  DecisionSummary,
+  ReceivedData,
+  StrategyMemory,
+} from "./contracts";
 import { isControlAction } from "./control";
 import { decodeGameMessage, serializePlan } from "./protocol";
 import { emptyMemory, planTick, safeFallbackPlan } from "./strategy/planner";
+import {
+  DEFAULT_CONFIG,
+  parseStrategyConfig,
+  type StrategyConfig,
+} from "./strategy/config";
 import { validatePlan } from "./strategy/validation";
 
 const GAME_WS_URL = "https://api.arenahero.io/api/v1/game/ws";
@@ -12,6 +22,7 @@ const RECONNECT_MIN_MS = 250;
 const RECONNECT_MAX_MS = 5000;
 
 export interface Env extends Cloudflare.Env {
+  ASSETS: Fetcher;
   ARENA_HERO_API_KEY: string;
   ADMIN_CONTROL_SECRET: string;
 }
@@ -29,6 +40,12 @@ interface StoredSubmission {
   tick: number;
   key: string;
   body: string;
+}
+
+interface StoredStatus {
+  tick: number;
+  updatedAt: string;
+  summary?: DecisionSummary;
 }
 
 function structuredLog(
@@ -55,6 +72,7 @@ export class ArenaHeroAgent extends DurableObject<Env> {
   private phase: ConnectionPhase = "idle";
   private reconnectAttempt = 0;
   private announcedTick?: number;
+  private strategyConfig: StrategyConfig | undefined;
   private receipts: Partial<Record<"AGENT" | "MANUAL", ReceivedData>> = {};
   private messageChain: Promise<void> = Promise.resolve();
 
@@ -67,6 +85,28 @@ export class ArenaHeroAgent extends DurableObject<Env> {
       return this.setDesiredState(
         data.action === "start" ? "running" : "stopped",
       );
+    }
+    if (path === "/config" && request.method === "GET") {
+      return jsonResponse(await this.getStrategyConfig());
+    }
+    if (path === "/config" && request.method === "PUT") {
+      try {
+        const config = parseStrategyConfig(await request.json());
+        await this.ctx.storage.put({
+          strategyConfig: config,
+          configUpdatedAt: new Date().toISOString(),
+        });
+        this.strategyConfig = config;
+        return jsonResponse({ ok: true, config });
+      } catch (error) {
+        return jsonResponse(
+          { error: error instanceof Error ? error.message : "INVALID_CONFIG" },
+          422,
+        );
+      }
+    }
+    if (path === "/status" && request.method === "GET") {
+      return this.statusResponse();
     }
     if (request.method === "POST" && path === "/ensure") {
       await this.ensureRunning();
@@ -92,6 +132,33 @@ export class ArenaHeroAgent extends DurableObject<Env> {
       authBlocked: authBlocked ?? false,
       memory: memory ?? emptyMemory(),
     };
+  }
+
+  private async getStrategyConfig(): Promise<StrategyConfig> {
+    if (this.strategyConfig) return this.strategyConfig;
+    this.strategyConfig =
+      (await this.ctx.storage.get<StrategyConfig>("strategyConfig")) ??
+      DEFAULT_CONFIG;
+    return this.strategyConfig;
+  }
+
+  private async statusResponse(): Promise<Response> {
+    const [desired, authBlocked, status, configUpdatedAt] = await Promise.all([
+      this.ctx.storage.get<DesiredState>("desired"),
+      this.ctx.storage.get<boolean>("authBlocked"),
+      this.ctx.storage.get<StoredStatus>("lastStatus"),
+      this.ctx.storage.get<string>("configUpdatedAt"),
+    ]);
+    return jsonResponse({
+      desired: desired ?? "running",
+      phase: this.phase,
+      connected: this.phase === "open",
+      authBlocked: authBlocked ?? false,
+      tick: status?.tick,
+      updatedAt: status?.updatedAt,
+      configUpdatedAt,
+      summary: status?.summary,
+    });
   }
 
   private async setDesiredState(desired: DesiredState): Promise<Response> {
@@ -207,14 +274,16 @@ export class ArenaHeroAgent extends DurableObject<Env> {
       await this.submitSerialized(existing);
       return;
     }
-    const memory =
-      (await this.ctx.storage.get<StrategyMemory>("strategyMemory")) ??
-      emptyMemory();
+    const [storedMemory, config] = await Promise.all([
+      this.ctx.storage.get<StrategyMemory>("strategyMemory"),
+      this.getStrategyConfig(),
+    ]);
+    const memory = storedMemory ?? emptyMemory();
     let plan: CommandPlan;
     let nextMemory = memory;
     let summary: ReturnType<typeof planTick>["summary"] | undefined;
     try {
-      const result = planTick(tick, state, memory);
+      const result = planTick(tick, state, memory, config);
       plan = validatePlan(result.plan, state)
         ? result.plan
         : safeFallbackPlan(tick, state);
@@ -224,7 +293,14 @@ export class ArenaHeroAgent extends DurableObject<Env> {
       structuredLog("planner_failed", { tick, reason: errorName(error) });
       plan = safeFallbackPlan(tick, state);
     }
-    await this.ctx.storage.put("strategyMemory", nextMemory);
+    await this.ctx.storage.put({
+      strategyMemory: nextMemory,
+      lastStatus: {
+        tick,
+        updatedAt: new Date().toISOString(),
+        ...(summary ? { summary } : {}),
+      } satisfies StoredStatus,
+    });
     structuredLog("plan_computed", {
       tick,
       posture: summary?.posture,

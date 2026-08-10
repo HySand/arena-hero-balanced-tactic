@@ -1,6 +1,18 @@
-﻿# Cloudflare Worker 部署
+# Cloudflare Worker 部署
 
 本目录是与上游 Python 项目隔离的 Cloudflare Workers/Durable Objects 版本。上游同步只合并仓库历史，不会覆盖 `worker/`；同步后会先执行 Worker 稳定检查，检查失败时不会推送。普通上游变更会在自动合并和稳定检查通过后重新部署，但不需要人工修改 `worker/` 代码。
+
+## 管理控制台
+
+部署完成后直接打开 Worker URL，即可使用随 Worker Assets 一起发布的管理控制台。控制台支持：
+
+- 查看 Agent 连接状态、当前 Tick 和策略姿态。
+- 启动或停止 Agent。
+- 读取、编辑和恢复策略配置默认值。
+
+策略配置存储在现有的 `ArenaHeroAgent` Durable Object 中，与 Agent 运行状态保持强一致；保存成功后从下一 Tick 起使用新配置。配置数据只有几 KB，并在 DO 实例内缓存；正常人工管理只产生极少量持久化读写，不会接近 Durable Objects 免费额度。
+
+读取配置、配置 schema 和状态无需管理员 Token。保存配置、启动或停止 Agent 时需要 `ADMIN_CONTROL_SECRET`。前端只把该 Token 写入当前标签页的 `sessionStorage`，不会把 Token 存入 Durable Object。
 
 ## 本地验证
 
@@ -31,23 +43,33 @@ npm run deploy
 需要设置两个 Worker secret：
 
 - `ARENA_HERO_API_KEY`：Arena Hero API key。
-- `ADMIN_CONTROL_SECRET`：控制接口 Bearer token。
+- `ADMIN_CONTROL_SECRET`：管理控制台写操作和控制接口使用的 Bearer token。
+
+公开上游仓库不需要 Token。`ARENA_HERO_API_KEY` 是 Worker 登录 Arena Hero 服务使用的账号凭据，与 GitHub 上游同步无关。
 
 控制接口：
 
 ```sh
-curl -X POST https://<worker>.workers.dev/control \
+curl -X POST https://<worker>.workers.dev/api/control \
   -H "Authorization: Bearer <ADMIN_CONTROL_SECRET>" \
   -H "Content-Type: application/json" \
   -d '{"action":"start"}'
 ```
 
-停止时将 `action` 改为 `stop`。
+停止时将 `action` 改为 `stop`。旧路径 `/control` 继续兼容。
 
-## GitHub Actions
+## Cloudflare Git 部署
+
+Cloudflare Worker 已通过 Git 集成连接本仓库。Cloudflare 构建设置使用：
+
+- 生产分支：`main`
+- 根目录：`worker`
+- 部署命令：默认的 `npx wrangler deploy`
+
+`public/` 中的控制台会通过 Workers Assets 与 Worker 一起部署，不需要额外的部署 Action。Cloudflare 检测到仓库更新后自动构建；普通上游代码变化不会要求人工调整 Worker，只有上游直接修改 Worker 专属路径、产生合并冲突或破坏 Worker 检查时才需要处理。
+
+## 上游同步
 
 公开上游的拉取和向当前仓库推送都使用 GitHub Actions 内置的 `GITHUB_TOKEN`，无需配置额外的同步 Token。工作流已声明 `contents: write`；若 `main` 分支保护禁止 Actions 推送，需要在分支规则中放行。
 
 `.github/workflows/sync-upstream.yml` 定时合并 `jinlingyuan123/arena-hero-balanced-tactic:main`。它使用 merge 而不是强制重置，因此保留本仓库的 Worker 目录；出现冲突或 Worker 检查失败时直接停止，线上现有部署不受影响。
-
-Cloudflare Worker 已通过 Git 集成连接本仓库。Cloudflare 构建设置应使用生产分支 `main`、根目录 `worker`，部署命令保持默认的 `npx wrangler deploy`。同步工作流只负责合并、运行 Worker 稳定检查并推送 `main`；Cloudflare 检测到仓库更新后自动构建部署。只有上游直接触碰 Worker 专属路径、产生合并冲突或破坏 Worker 检查时才停止并等待人工处理。

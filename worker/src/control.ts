@@ -1,4 +1,5 @@
 export function authorized(header: string | null, secret: string): boolean {
+  if (!secret) return false;
   const expected = `Bearer ${secret}`;
   if (!header || header.length !== expected.length) return false;
   let difference = 0;

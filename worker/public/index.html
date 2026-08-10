@@ -1,0 +1,104 @@
+﻿<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="color-scheme" content="dark" />
+    <title>Arena Hero Worker 控制台</title>
+    <link rel="stylesheet" href="/styles.css" />
+    <script src="/app.js" defer></script>
+  </head>
+  <body>
+    <header class="hero">
+      <div>
+        <p class="eyebrow">CLOUDFLARE WORKER / DURABLE OBJECT</p>
+        <h1>Arena Hero Worker 控制台</h1>
+        <p class="subtitle">
+          配置保存在 ArenaHeroAgent Durable Object，保存后下一 Tick 生效。
+        </p>
+      </div>
+      <div class="status-badge" id="connectionBadge">读取中</div>
+    </header>
+
+    <main>
+      <section class="status-grid" aria-label="运行状态">
+        <article class="metric">
+          <span>期望状态</span><strong id="desiredState">—</strong>
+        </article>
+        <article class="metric">
+          <span>连接阶段</span><strong id="phaseState">—</strong>
+        </article>
+        <article class="metric">
+          <span>当前 Tick</span><strong id="tickState">—</strong>
+        </article>
+        <article class="metric">
+          <span>策略姿态</span><strong id="postureState">—</strong>
+        </article>
+      </section>
+
+      <section class="panel auth-panel">
+        <div>
+          <h2>管理员授权</h2>
+          <p>
+            Token 仅保存在当前标签页的 sessionStorage，不会写入 Durable Object。
+          </p>
+        </div>
+        <label class="token-field">
+          <span>ADMIN_CONTROL_SECRET</span>
+          <input
+            id="adminToken"
+            type="password"
+            autocomplete="off"
+            placeholder="输入 Worker Secret"
+          />
+        </label>
+        <div class="button-row">
+          <button type="button" class="secondary" id="saveToken">
+            保存到当前会话
+          </button>
+          <button type="button" class="success" id="startAgent">
+            启动 Agent
+          </button>
+          <button type="button" class="danger" id="stopAgent">
+            停止 Agent
+          </button>
+        </div>
+      </section>
+
+      <section class="panel">
+        <div class="section-heading">
+          <div>
+            <h2>策略配置</h2>
+            <p>所有字段由 Worker 的配置 schema 生成，避免前后端定义漂移。</p>
+          </div>
+          <div class="button-row">
+            <button type="button" class="secondary" id="resetConfig">
+              恢复默认
+            </button>
+            <button type="button" class="primary" id="saveConfig">
+              保存配置
+            </button>
+          </div>
+        </div>
+        <div id="configGroups" class="config-groups"></div>
+      </section>
+
+      <section class="panel">
+        <div class="section-heading">
+          <div>
+            <h2>姿态任务权重</h2>
+            <p>控制每种姿态下经济、防守、争夺、进攻和探索任务的相对优先级。</p>
+          </div>
+        </div>
+        <div class="weights-wrap">
+          <table id="weightsTable">
+            <thead></thead>
+            <tbody></tbody>
+          </table>
+        </div>
+      </section>
+    </main>
+
+    <div class="toast" id="toast" role="status" aria-live="polite"></div>
+  </body>
+</html>

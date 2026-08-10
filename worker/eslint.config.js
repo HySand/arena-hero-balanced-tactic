@@ -13,9 +13,12 @@ export default tseslint.config(
       "worker-configuration.d.ts",
     ],
   },
-  js.configs.recommended,
-  ...tseslint.configs.recommendedTypeChecked,
   {
+    files: ["src/**/*.ts", "test/**/*.ts", "vitest.config.ts"],
+    extends: [
+      js.configs.recommended,
+      ...tseslint.configs.recommendedTypeChecked,
+    ],
     languageOptions: {
       globals: { ...globals.worker, ...globals.node },
       parserOptions: {
@@ -27,6 +30,13 @@ export default tseslint.config(
       "@typescript-eslint/consistent-type-imports": "error",
       "@typescript-eslint/no-floating-promises": "error",
       "@typescript-eslint/no-explicit-any": "error",
+    },
+  },
+  {
+    files: ["public/**/*.js"],
+    ...js.configs.recommended,
+    languageOptions: {
+      globals: globals.browser,
     },
   },
 );

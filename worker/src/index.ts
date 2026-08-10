@@ -1,39 +1,14 @@
 import type { Env } from "./supervisor";
-import { authorized, isControlAction } from "./control";
+import { handleRequest } from "./router";
 
+export { handleRequest } from "./router";
 export { ArenaHeroAgent } from "./supervisor";
 
 const AGENT_NAME = "arena-hero-primary";
 
 export default {
-  async fetch(request: Request, env: Env): Promise<Response> {
-    const url = new URL(request.url);
-    if (request.method !== "POST" || url.pathname !== "/control") {
-      return new Response(null, { status: 404 });
-    }
-    if (
-      !authorized(
-        request.headers.get("Authorization"),
-        env.ADMIN_CONTROL_SECRET,
-      )
-    ) {
-      return new Response(null, { status: 404 });
-    }
-    let body: unknown;
-    try {
-      body = await request.json();
-    } catch {
-      return Response.json({ error: "INVALID_CONTROL" }, { status: 400 });
-    }
-    if (!isControlAction(body)) {
-      return Response.json({ error: "INVALID_CONTROL" }, { status: 400 });
-    }
-    const stub = env.AGENT.getByName(AGENT_NAME);
-    return stub.fetch("https://agent.internal/control", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(body),
-    });
+  fetch(request: Request, env: Env): Promise<Response> {
+    return handleRequest(request, env);
   },
 
   async scheduled(_controller: ScheduledController, env: Env): Promise<void> {
