@@ -115,8 +115,10 @@ function worldObject(value: unknown): WorldObject | undefined {
     unit_type: data.unit_type,
   };
   if (data.controlled && data.unit_type === "WORKER") {
-    if (!Number.isInteger(data.cargo)) return undefined;
-    unit.cargo = data.cargo as number;
+    if (data.cargo !== undefined && data.cargo !== null) {
+      if (!Number.isInteger(data.cargo)) return undefined;
+      unit.cargo = data.cargo as number;
+    }
   }
   return unit;
 }

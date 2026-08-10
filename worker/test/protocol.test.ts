@@ -55,6 +55,37 @@ describe("protocol decoder", () => {
     }
   });
 
+  it("accepts a controlled worker when optional cargo is null", () => {
+    const decoded = decodeGameMessage(
+      JSON.stringify({
+        type: "state",
+        data: {
+          status: "ACTIVE",
+          resources: 5,
+          population: 1,
+          champion_beacon: { position: [0, 0] },
+          objects: [
+            {
+              kind: "UNIT",
+              id: IDS.worker1,
+              controlled: true,
+              position: [2, 2],
+              hp: 2,
+              unit_type: "WORKER",
+              cargo: null,
+            },
+          ],
+          events: [],
+        },
+      }),
+    );
+
+    expect(decoded).toMatchObject({
+      type: "state",
+      data: { objects: [{ id: IDS.worker1, unit_type: "WORKER" }] },
+    });
+  });
+
   it("derives upkeep fields from the current SDK state contract", () => {
     const decoded = decodeGameMessage(
       JSON.stringify({
