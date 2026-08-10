@@ -1,15 +1,15 @@
-﻿{
+{
   "name": "arena-hero-balanced-tactic-worker",
   "version": "0.1.0",
   "private": true,
   "type": "module",
   "scripts": {
-    "dev": "wrangler dev",
-    "deploy": "wrangler deploy",
-    "deploy:dry-run": "wrangler deploy --dry-run",
-    "secrets": "wrangler secret put ARENA_HERO_API_KEY && wrangler secret put ADMIN_CONTROL_SECRET",
-    "cf-typegen": "wrangler types",
-    "cf-typegen:check": "wrangler types --check",
+    "dev": "wrangler dev --config wrangler.jsonc",
+    "deploy": "wrangler deploy --config wrangler.jsonc",
+    "deploy:dry-run": "wrangler deploy --dry-run --config wrangler.jsonc",
+    "secrets": "wrangler secret put ARENA_HERO_API_KEY --config wrangler.jsonc && wrangler secret put ADMIN_CONTROL_SECRET --config wrangler.jsonc",
+    "cf-typegen": "wrangler types --config wrangler.jsonc",
+    "cf-typegen:check": "wrangler types --check --config wrangler.jsonc",
     "format:check": "prettier --check package.json tsconfig.json eslint.config.js wrangler.jsonc vitest.config.ts README.md src test public",
     "format": "prettier --write package.json tsconfig.json eslint.config.js wrangler.jsonc vitest.config.ts README.md src test public",
     "lint": "eslint .",

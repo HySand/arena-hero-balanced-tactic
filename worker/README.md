@@ -66,6 +66,8 @@ Cloudflare Worker 已通过 Git 集成连接本仓库。Cloudflare 构建设置�
 - 根目录：`worker`
 - 部署命令：默认的 `npx wrangler deploy`
 
+仓库根目录的 `.wrangler/deploy/config.json` 会把 Wrangler 强制重定向到 `worker/wrangler.jsonc`。即使 Cloudflare 构建根目录被设置成仓库根目录，也不会退化成只上传静态 Assets 的部署。
+
 `public/` 中的控制台会通过 Workers Assets 与 Worker 一起部署，不需要额外的部署 Action。Cloudflare 检测到仓库更新后自动构建；普通上游代码变化不会要求人工调整 Worker，只有上游直接修改 Worker 专属路径、产生合并冲突或破坏 Worker 检查时才需要处理。
 
 ## 上游同步

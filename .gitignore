@@ -79,7 +79,9 @@ theme-*.png
 # Cloudflare Worker local state and dependencies
 node_modules/
 worker/node_modules/
-.wrangler/
+.wrangler/*
+!.wrangler/deploy/
+!.wrangler/deploy/config.json
 worker/.wrangler/
 coverage/
 worker/coverage/
