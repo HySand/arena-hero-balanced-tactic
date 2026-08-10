@@ -1,4 +1,4 @@
-﻿# Cloudflare Worker 部署
+# Cloudflare Worker 部署
 
 本目录是与上游 Python 项目隔离的 Cloudflare Workers/Durable Objects 版本。上游同步只合并仓库历史，不会覆盖 `worker/`；同步后会先执行 Worker 稳定检查，检查失败时不会推送。普通上游变更会在自动合并和稳定检查通过后重新部署，但不需要人工修改 `worker/` 代码。
 
@@ -48,10 +48,8 @@ curl -X POST https://<worker>.workers.dev/control \
 
 仓库需要配置：
 
-- `CLOUDFLARE_API_TOKEN`
-- `CLOUDFLARE_ACCOUNT_ID`
-- `UPSTREAM_SYNC_TOKEN`：可推送本仓库 `main` 的细粒度 PAT；专用 Token 推送后会正常触发部署工作流
+- `UPSTREAM_SYNC_TOKEN`：可推送本仓库 `main` 的细粒度 PAT；同步 Action 使用它写入上游更新
 
 `.github/workflows/sync-upstream.yml` 定时合并 `jinlingyuan123/arena-hero-balanced-tactic:main`。它使用 merge 而不是强制重置，因此保留本仓库的 Worker 目录；出现冲突或 Worker 检查失败时直接停止，线上现有部署不受影响。
 
-`.github/workflows/deploy-worker.yml` 监听所有 `main` push。同步工作流只负责合并、运行 Worker 稳定检查并推送；推送成功后部署工作流自动检测分支变更并重新部署。只有上游直接触碰 Worker 专属路径、产生合并冲突或破坏 Worker 检查时才停止并等待人工处理。
+Cloudflare Worker 已通过 Git 集成连接本仓库。Cloudflare 构建设置应使用生产分支 `main`、根目录 `worker`，部署命令保持默认的 `npx wrangler deploy`。同步工作流只负责合并、运行 Worker 稳定检查并推送 `main`；Cloudflare 检测到仓库更新后自动构建部署。只有上游直接触碰 Worker 专属路径、产生合并冲突或破坏 Worker 检查时才停止并等待人工处理。

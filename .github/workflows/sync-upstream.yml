@@ -45,7 +45,6 @@ jobs:
             worker \
             scripts/deploy-worker.ps1 \
             scripts/deploy-worker.sh \
-            .github/workflows/deploy-worker.yml \
             .github/workflows/sync-upstream.yml)
           if [[ -n "$protected_changes" ]]; then
             echo "Upstream changed Worker-owned paths:" >&2
