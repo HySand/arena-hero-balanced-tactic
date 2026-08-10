@@ -43,9 +43,23 @@ async function requestJSON(url, options = {}) {
   return document;
 }
 
+function normalizedAdminToken() {
+  let token = $("adminToken").value.trim();
+  token = token.replace(/^ADMIN_CONTROL_SECRET\s*=\s*/i, "");
+  token = token.replace(/^Bearer\s+/i, "").trim();
+  if (
+    (token.startsWith('"') && token.endsWith('"')) ||
+    (token.startsWith("'") && token.endsWith("'"))
+  ) {
+    token = token.slice(1, -1).trim();
+  }
+  return token;
+}
+
 function tokenHeaders() {
-  const token = $("adminToken").value.trim();
+  const token = normalizedAdminToken();
   if (!token) throw new Error("请先输入 ADMIN_CONTROL_SECRET");
+  $("adminToken").value = token;
   sessionStorage.setItem(TOKEN_KEY, token);
   return { Authorization: `Bearer ${token}` };
 }

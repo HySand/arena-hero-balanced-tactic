@@ -40,7 +40,8 @@
         <div>
           <h2>管理员授权</h2>
           <p>
-            Token 仅保存在当前标签页的 sessionStorage，不会写入 Durable Object。
+            Token 仅保存在当前标签页的 sessionStorage，不会写入 Durable
+            Object；粘贴时可直接使用 Secret 值。
           </p>
         </div>
         <label class="token-field">
@@ -49,7 +50,7 @@
             id="adminToken"
             type="password"
             autocomplete="off"
-            placeholder="输入 Worker Secret"
+            placeholder="粘贴 Secret 值（可带 Bearer 前缀）"
           />
         </label>
         <div class="button-row">
