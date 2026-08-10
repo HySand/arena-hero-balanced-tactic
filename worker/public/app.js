@@ -35,14 +35,25 @@ async function requestJSON(url, options = {}) {
   const document = await response
     .json()
     .catch(() => ({ error: `HTTP ${response.status}` }));
-  if (!response.ok)
-    throw new Error(document.error || `HTTP ${response.status}`);
+  if (!response.ok) {
+    const error = new Error(document.error || `HTTP ${response.status}`);
+    error.status = response.status;
+    throw error;
+  }
   return document;
 }
 
 function tokenHeaders() {
-  const token = sessionStorage.getItem(TOKEN_KEY) || "";
-  return token ? { Authorization: `Bearer ${token}` } : {};
+  const token = $("adminToken").value.trim();
+  if (!token) throw new Error("请先输入 ADMIN_CONTROL_SECRET");
+  sessionStorage.setItem(TOKEN_KEY, token);
+  return { Authorization: `Bearer ${token}` };
+}
+
+function adminErrorMessage(error) {
+  return error.status === 404
+    ? "管理员 Secret 未配置或 Token 不正确"
+    : error.message;
 }
 
 function showToast(message, error = false) {
@@ -146,7 +157,7 @@ async function saveConfig() {
     renderConfig();
     showToast("配置已保存，将在下一 Tick 生效");
   } catch (error) {
-    showToast(error.message, true);
+    showToast(adminErrorMessage(error), true);
   }
 }
 
@@ -160,7 +171,7 @@ async function control(action) {
     showToast(`Agent 已切换为 ${result.desired}`);
     await refreshStatus();
   } catch (error) {
-    showToast(error.message, true);
+    showToast(adminErrorMessage(error), true);
   }
 }
 
@@ -190,7 +201,12 @@ async function refreshStatus() {
 function bindEvents() {
   $("adminToken").value = sessionStorage.getItem(TOKEN_KEY) || "";
   $("saveToken").addEventListener("click", () => {
-    sessionStorage.setItem(TOKEN_KEY, $("adminToken").value.trim());
+    const token = $("adminToken").value.trim();
+    if (!token) {
+      showToast("请输入 ADMIN_CONTROL_SECRET", true);
+      return;
+    }
+    sessionStorage.setItem(TOKEN_KEY, token);
     showToast("管理员 Token 已保存到当前会话");
   });
   $("saveConfig").addEventListener("click", saveConfig);

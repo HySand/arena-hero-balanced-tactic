@@ -45,6 +45,8 @@ npm run deploy
 - `ARENA_HERO_API_KEY`：Arena Hero API key。
 - `ADMIN_CONTROL_SECRET`：管理控制台写操作和控制接口使用的 Bearer token。
 
+`wrangler.jsonc` 启用了 `keep_vars`，Git 自动部署会保留已经在 Cloudflare 中设置的 Secrets，不会再次清空。
+
 公开上游仓库不需要 Token。`ARENA_HERO_API_KEY` 是 Worker 登录 Arena Hero 服务使用的账号凭据，与 GitHub 上游同步无关。
 
 控制接口：
