@@ -22,7 +22,7 @@ jobs:
         with:
           ref: main
           fetch-depth: 0
-          token: ${{ secrets.UPSTREAM_SYNC_TOKEN }}
+          token: ${{ github.token }}
 
       - name: Merge upstream main
         id: sync

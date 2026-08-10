@@ -1,4 +1,4 @@
-# Cloudflare Worker 部署
+﻿# Cloudflare Worker 部署
 
 本目录是与上游 Python 项目隔离的 Cloudflare Workers/Durable Objects 版本。上游同步只合并仓库历史，不会覆盖 `worker/`；同步后会先执行 Worker 稳定检查，检查失败时不会推送。普通上游变更会在自动合并和稳定检查通过后重新部署，但不需要人工修改 `worker/` 代码。
 
@@ -46,9 +46,7 @@ curl -X POST https://<worker>.workers.dev/control \
 
 ## GitHub Actions
 
-仓库需要配置：
-
-- `UPSTREAM_SYNC_TOKEN`：可推送本仓库 `main` 的细粒度 PAT；同步 Action 使用它写入上游更新
+公开上游的拉取和向当前仓库推送都使用 GitHub Actions 内置的 `GITHUB_TOKEN`，无需配置额外的同步 Token。工作流已声明 `contents: write`；若 `main` 分支保护禁止 Actions 推送，需要在分支规则中放行。
 
 `.github/workflows/sync-upstream.yml` 定时合并 `jinlingyuan123/arena-hero-balanced-tactic:main`。它使用 merge 而不是强制重置，因此保留本仓库的 Worker 目录；出现冲突或 Worker 检查失败时直接停止，线上现有部署不受影响。
 
