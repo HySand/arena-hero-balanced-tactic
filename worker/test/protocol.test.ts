@@ -19,8 +19,6 @@ describe("protocol decoder", () => {
           status: "ACTIVE",
           resources: 5,
           population: 1,
-          population_tier: 0,
-          upkeep_next_tick: 0,
           champion_beacon: { position: [0, 0] },
           objects: [
             {
@@ -52,7 +50,34 @@ describe("protocol decoder", () => {
     if (decoded?.type === "state") {
       expect(decoded.data.objects).toHaveLength(3);
       expect(decoded.data.champion_beacon.position).toEqual([0, 0]);
+      expect(decoded.data.population_tier).toBe(0);
+      expect(decoded.data.upkeep_next_tick).toBe(0);
     }
+  });
+
+  it("derives upkeep fields from the current SDK state contract", () => {
+    const decoded = decodeGameMessage(
+      JSON.stringify({
+        type: "state",
+        data: {
+          status: "ACTIVE",
+          resources: 5,
+          population: 41,
+          champion_beacon: { position: [0, 0] },
+          objects: [],
+          events: [],
+        },
+      }),
+    );
+
+    expect(decoded).toMatchObject({
+      type: "state",
+      data: {
+        population: 41,
+        population_tier: 2,
+        upkeep_next_tick: 3,
+      },
+    });
   });
 
   it("rejects malformed or unsupported messages", () => {

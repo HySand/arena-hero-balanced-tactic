@@ -136,8 +136,6 @@ function playerState(value: unknown): PlayerState | undefined {
     (data.status !== "ACTIVE" && data.status !== "RESPAWNING") ||
     !Number.isInteger(data.resources) ||
     !Number.isInteger(data.population) ||
-    !Number.isInteger(data.population_tier) ||
-    !Number.isInteger(data.upkeep_next_tick) ||
     !Array.isArray(data.objects) ||
     !Array.isArray(data.events)
   ) {
@@ -150,12 +148,15 @@ function playerState(value: unknown): PlayerState | undefined {
   if (!decodedObjects.every((item): item is WorldObject => item !== undefined))
     return undefined;
 
+  const population = data.population as number;
+  const populationTier = Math.floor(population / 20);
+  const upkeepNextTick = (populationTier * (populationTier + 1)) / 2;
   const state: PlayerState = {
     status: data.status,
     resources: data.resources as number,
-    population: data.population as number,
-    population_tier: data.population_tier as number,
-    upkeep_next_tick: data.upkeep_next_tick as number,
+    population,
+    population_tier: populationTier,
+    upkeep_next_tick: upkeepNextTick,
     champion_beacon: { position: beaconPosition },
     objects: decodedObjects,
     events: data.events.filter(
