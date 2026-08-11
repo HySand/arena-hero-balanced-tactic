@@ -20,6 +20,7 @@ const GAME_WS_URL = "https://api.arenahero.io/api/v1/game/ws";
 const COMMAND_URL = "https://api.arenahero.io/api/v1/game/commands";
 const RECONNECT_MIN_MS = 250;
 const RECONNECT_MAX_MS = 5000;
+const COMMAND_TIMEOUT_MS = 5000;
 
 export interface Env extends Cloudflare.Env {
   ASSETS: Fetcher;
@@ -417,27 +418,38 @@ export class ArenaHeroAgent extends DurableObject<Env> {
             "Idempotency-Key": submission.key,
           },
           body: submission.body,
+          signal: AbortSignal.timeout(COMMAND_TIMEOUT_MS),
         });
       } catch (error) {
+        const reason = errorName(error);
+        await this.recordDiagnostic(
+          "command_transport_failed",
+          submission.tick,
+          {
+            attempt,
+            reason,
+          },
+        );
         structuredLog("plan_transport_failed", {
           tick: submission.tick,
           attempt,
-          reason: errorName(error),
+          reason,
         });
         if (attempt < 2) await delay(jitteredBackoff(attempt));
         continue;
       }
 
-      const payload = await safeJson(response);
-      const errorCode =
-        typeof payload?.error === "string" ? payload.error : undefined;
       if (response.status === 202) {
+        await response.body?.cancel();
         await this.recordDiagnostic("command_accepted", submission.tick, {
           attempt,
         });
         structuredLog("plan_accepted", { tick: submission.tick, attempt });
         return;
       }
+      const payload = await safeJson(response, COMMAND_TIMEOUT_MS);
+      const errorCode =
+        typeof payload?.error === "string" ? payload.error : undefined;
       if (response.status === 401) {
         await this.blockAuthentication("command_401");
         return;
@@ -571,9 +583,15 @@ function delay(milliseconds: number): Promise<void> {
 
 async function safeJson(
   response: Response,
+  timeoutMs = COMMAND_TIMEOUT_MS,
 ): Promise<Record<string, unknown> | undefined> {
   try {
-    const value: unknown = await response.json();
+    const value: unknown = await Promise.race([
+      response.json(),
+      delay(timeoutMs).then(() => {
+        throw new DOMException("Response body timeout", "TimeoutError");
+      }),
+    ]);
     return typeof value === "object" && value !== null && !Array.isArray(value)
       ? (value as Record<string, unknown>)
       : undefined;
