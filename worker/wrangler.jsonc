@@ -16,9 +16,6 @@
   "triggers": {
     "crons": ["* * * * *"],
   },
-  "limits": {
-    "cpu_ms": 300000,
-  },
   "durable_objects": {
     "bindings": [
       {

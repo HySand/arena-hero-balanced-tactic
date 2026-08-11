@@ -2,8 +2,6 @@
 
 本目录是与上游 Python 项目隔离的 Cloudflare Workers/Durable Objects 版本。上游同步只合并仓库历史，不会覆盖 `worker/`；同步后会先执行 Worker 稳定检查，检查失败时不会推送。普通上游变更会在自动合并和稳定检查通过后重新部署，但不需要人工修改 `worker/` 代码。
 
-Worker 的 CPU 上限配置为 300 秒，避免大型已探索地图上的策略计算触发 Durable Object 默认 30 秒 CPU 限制并重置连接。
-
 ## 管理控制台
 
 部署完成后直接打开 Worker URL，即可使用随 Worker Assets 一起发布的管理控制台。控制台支持：
@@ -12,7 +10,7 @@ Worker 的 CPU 上限配置为 300 秒，避免大型已探索地图上的策略
 - 启动或停止 Agent。
 - 读取、编辑和恢复策略配置默认值。
 
-策略配置和前端状态存储在主 `ArenaHeroState` Durable Object 中，命令结果日志存储在另一个独立实例；日志存储异常不会中断 Tick。`ArenaHeroAgent` 只负责游戏 WebSocket、策略计算和策略记忆，其运行轨迹写入 Cloudflare 结构化日志。每个 Tick 的命令通过独立的 `ArenaHeroState` Durable Object 实例在后台提交，Agent 发起投递后不会等待 Arena HTTP 完成，单次请求异常不会阻塞后续 Tick 或前端接口。配置保存成功后从下一 Tick 起使用新值。
+策略配置和前端状态存储在主 `ArenaHeroState` Durable Object 中，命令结果日志存储在另一个独立实例；日志存储异常不会中断 Tick。`ArenaHeroAgent` 只负责游戏 WebSocket、策略计算和策略记忆，其运行轨迹写入 Cloudflare 结构化日志。每个 Tick 的命令通过无状态 `ArenaCommandDispatcher` Worker entrypoint 在后台提交，Arena HTTP 不在 Durable Object 内执行，单次请求异常或超时不会重置 Agent 或阻塞后续 Tick、前端接口。配置保存成功后从下一 Tick 起使用新值。
 
 读取配置、配置 schema 和状态无需管理员 Token。保存配置、启动或停止 Agent 时需要 `ADMIN_CONTROL_SECRET`。前端只把该 Token 写入当前标签页的 `sessionStorage`，不会把 Token 存入 Durable Object。
 

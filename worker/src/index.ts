@@ -3,6 +3,7 @@ import { PRIMARY_STATE_INSTANCE } from "./instances";
 import type { Env } from "./supervisor";
 
 export { handleRequest } from "./router";
+export { ArenaCommandDispatcher } from "./command-dispatcher";
 export { ArenaHeroState } from "./state";
 export { ArenaHeroAgent } from "./supervisor";
 

@@ -2,7 +2,7 @@ import { DurableObject } from "cloudflare:workers";
 
 import type { StoredSubmission } from "./arena-command";
 import type { CommandPlan, ReceivedData, StrategyMemory } from "./contracts";
-import { commandStateInstance, PRIMARY_STATE_INSTANCE } from "./instances";
+import { PRIMARY_STATE_INSTANCE } from "./instances";
 import { decodeStrategyMemory, encodeStrategyMemory } from "./memory-storage";
 import { decodeGameMessage, serializePlan } from "./protocol";
 import type { AgentRuntimeSnapshot, ArenaHeroState } from "./state";
@@ -407,15 +407,15 @@ export class ArenaHeroAgent extends DurableObject<Env> {
   private dispatchSubmission(submission: StoredSubmission): void {
     const startedAt = Date.now();
     this.ctx.waitUntil(
-      this.forwardSubmission(submission)
+      this.ctx.exports.ArenaCommandDispatcher.submit(submission)
         .then(() => {
-          structuredLog("command_submit_forwarded", {
+          structuredLog("command_submit_dispatched", {
             tick: submission.tick,
             durationMs: Date.now() - startedAt,
           });
         })
         .catch((error: unknown) => {
-          structuredLog("command_forward_failed", {
+          structuredLog("command_dispatch_failed", {
             reason: errorName(error),
             tick: submission.tick,
             durationMs: Date.now() - startedAt,
@@ -437,19 +437,6 @@ export class ArenaHeroAgent extends DurableObject<Env> {
         connection: update,
       }),
     });
-  }
-
-  private async forwardSubmission(submission: StoredSubmission): Promise<void> {
-    const response = await this.env.STATE.getByName(
-      commandStateInstance(submission.key),
-    ).fetch("https://state.internal/submit", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(submission),
-    });
-    if (!response.ok) {
-      throw new Error(`Command state rejected: ${response.status}`);
-    }
   }
 
   private state(): DurableObjectStub<ArenaHeroState> {
