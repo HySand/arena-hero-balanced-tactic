@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import {
   directionBetween,
+  findWeightedPath,
   findStep,
   hasVision,
   key,
@@ -20,6 +21,18 @@ describe("geometry", () => {
   it("routes around a known obstacle", () => {
     const step = findStep([0, 0], [2, 0], new Set([key([1, 0])]), new Map());
     expect(step).toBe("UP");
+  });
+
+  it("prefers a lower-cost weighted corridor deterministically", () => {
+    const path = findWeightedPath(
+      [0, 0],
+      [2, 0],
+      new Set(),
+      (_from, to) => (key(to) === key([1, 0]) ? 10 : 1),
+      { maxNodes: 64, maxDistance: 8 },
+    );
+
+    expect(path).toEqual(["UP", "RIGHT", "RIGHT", "DOWN"]);
   });
 
   it("reports whether an intermediate cell blocks a straight Ranger line", () => {

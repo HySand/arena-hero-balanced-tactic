@@ -2,6 +2,8 @@
 
 本目录是与上游 Python 项目隔离的 Cloudflare Workers/Durable Objects 版本。上游同步只合并仓库历史，不会覆盖 `worker/`；同步后会先执行 Worker 稳定检查，检查失败时不会推送。普通上游变更会在自动合并和稳定检查通过后重新部署，但不需要人工修改 `worker/` 代码。
 
+Worker 的 CPU 上限配置为 300 秒，避免大型已探索地图上的策略计算触发 Durable Object 默认 30 秒 CPU 限制并重置连接。
+
 ## 管理控制台
 
 部署完成后直接打开 Worker URL，即可使用随 Worker Assets 一起发布的管理控制台。控制台支持：

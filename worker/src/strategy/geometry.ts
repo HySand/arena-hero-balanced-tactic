@@ -106,6 +106,65 @@ export interface PathOptions {
   inBounds?: ((position: Position) => boolean) | undefined;
 }
 
+interface WeightedOpenEntry {
+  key: string;
+  cost: number;
+}
+
+class WeightedOpenHeap {
+  private readonly entries: WeightedOpenEntry[] = [];
+
+  get size(): number {
+    return this.entries.length;
+  }
+
+  push(entry: WeightedOpenEntry): void {
+    this.entries.push(entry);
+    let index = this.entries.length - 1;
+    while (index > 0) {
+      const parent = Math.floor((index - 1) / 2);
+      const parentEntry = this.entries[parent];
+      if (!parentEntry || compareOpenEntries(parentEntry, entry) <= 0) break;
+      this.entries[index] = parentEntry;
+      index = parent;
+    }
+    this.entries[index] = entry;
+  }
+
+  pop(): WeightedOpenEntry | undefined {
+    const first = this.entries[0];
+    const last = this.entries.pop();
+    if (!first || !last || this.entries.length === 0) return first;
+
+    let index = 0;
+    while (true) {
+      const left = index * 2 + 1;
+      const right = left + 1;
+      if (left >= this.entries.length) break;
+      const leftEntry = this.entries[left];
+      const rightEntry = this.entries[right];
+      if (!leftEntry) break;
+      const child =
+        rightEntry && compareOpenEntries(rightEntry, leftEntry) < 0
+          ? right
+          : left;
+      const childEntry = this.entries[child];
+      if (!childEntry || compareOpenEntries(last, childEntry) <= 0) break;
+      this.entries[index] = childEntry;
+      index = child;
+    }
+    this.entries[index] = last;
+    return first;
+  }
+}
+
+function compareOpenEntries(
+  left: WeightedOpenEntry,
+  right: WeightedOpenEntry,
+): number {
+  return left.cost - right.cost || left.key.localeCompare(right.key);
+}
+
 function reconstructPath(
   cameFrom: Map<string, { from: string; direction: Direction }>,
   startKey: string,
@@ -319,29 +378,17 @@ export function findWeightedPath(
   const bestCost = new Map<string, number>([[startKey, 0]]);
   const bestDepth = new Map<string, number>([[startKey, 0]]);
   const cameFrom = new Map<string, { from: string; direction: Direction }>();
-  // Poor-man's Dijkstra: scan open set each pop (maps are small under maxNodes).
-  const open = new Set<string>([startKey]);
+  const open = new WeightedOpenHeap();
+  open.push({ key: startKey, cost: 0 });
   const positions = new Map<string, Position>([[startKey, start]]);
   let expansions = 0;
 
   while (open.size > 0 && expansions < maxNodes) {
-    let currentKey: string | undefined;
-    let currentCost = Number.POSITIVE_INFINITY;
-    for (const candidateKey of open) {
-      const cost = bestCost.get(candidateKey) ?? Number.POSITIVE_INFINITY;
-      if (
-        cost < currentCost ||
-        (cost === currentCost &&
-          currentKey !== undefined &&
-          candidateKey.localeCompare(currentKey) < 0) ||
-        currentKey === undefined
-      ) {
-        currentKey = candidateKey;
-        currentCost = cost;
-      }
-    }
-    if (currentKey === undefined) break;
-    open.delete(currentKey);
+    const currentEntry = open.pop();
+    if (!currentEntry) break;
+    const currentKey = currentEntry.key;
+    const currentCost = currentEntry.cost;
+    if (currentCost !== bestCost.get(currentKey)) continue;
     expansions += 1;
     if (currentKey === goalKey) {
       return reconstructPath(cameFrom, startKey, goalKey);
@@ -368,7 +415,7 @@ export function findWeightedPath(
       bestDepth.set(candidateKey, currentDepth + 1);
       cameFrom.set(candidateKey, { from: currentKey, direction });
       positions.set(candidateKey, candidate);
-      open.add(candidateKey);
+      open.push({ key: candidateKey, cost: nextCost });
     }
   }
 
