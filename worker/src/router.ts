@@ -1,24 +1,32 @@
 import { authorized, isControlAction } from "./control";
 import { CONFIG_SCHEMA } from "./strategy/config";
 
-const AGENT_NAME = "arena-hero-primary";
+const INSTANCE_NAME = "arena-hero-primary";
 const MAX_REQUEST_BYTES = 64 * 1024;
 
-interface AgentFetcher {
+interface InternalFetcher {
   fetch(input: RequestInfo | URL, init?: RequestInit): Promise<Response>;
 }
 
 export interface RequestEnvironment {
   ADMIN_CONTROL_SECRET: string;
   AGENT: {
-    getByName(name: string): AgentFetcher;
+    getByName(name: string): InternalFetcher;
   };
-  ASSETS: AgentFetcher;
+  STATE: {
+    getByName(name: string): InternalFetcher;
+  };
+  ASSETS: InternalFetcher;
+}
+
+interface RequestContext {
+  waitUntil(promise: Promise<unknown>): void;
 }
 
 export async function handleRequest(
   request: Request,
   env: RequestEnvironment,
+  context?: RequestContext,
 ): Promise<Response> {
   const url = new URL(request.url);
 
@@ -29,7 +37,7 @@ export async function handleRequest(
     return Response.json(CONFIG_SCHEMA);
   }
   if (url.pathname === "/api/config" && request.method === "GET") {
-    return agent(env).fetch("https://agent.internal/config");
+    return state(env).fetch("https://state.internal/config");
   }
   if (url.pathname === "/api/config" && request.method === "PUT") {
     if (!authorizedRequest(request, env.ADMIN_CONTROL_SECRET)) {
@@ -37,20 +45,20 @@ export async function handleRequest(
     }
     const body = await readRequestBody(request);
     if (body instanceof Response) return body;
-    return agent(env).fetch("https://agent.internal/config", {
+    return state(env).fetch("https://state.internal/config", {
       method: "PUT",
       headers: { "Content-Type": "application/json" },
       body,
     });
   }
   if (url.pathname === "/api/status" && request.method === "GET") {
-    return agent(env).fetch("https://agent.internal/status");
+    return state(env).fetch("https://state.internal/status");
   }
   if (url.pathname === "/api/logs" && request.method === "GET") {
     if (!authorizedRequest(request, env.ADMIN_CONTROL_SECRET)) {
       return new Response(null, { status: 404 });
     }
-    return agent(env).fetch("https://agent.internal/logs");
+    return state(env).fetch("https://state.internal/logs");
   }
   if (
     (url.pathname === "/api/control" || url.pathname === "/control") &&
@@ -70,11 +78,19 @@ export async function handleRequest(
     if (!isControlAction(action)) {
       return Response.json({ error: "INVALID_CONTROL" }, { status: 400 });
     }
-    return agent(env).fetch("https://agent.internal/control", {
+    const response = await state(env).fetch("https://state.internal/control", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body,
     });
+    if (response.ok && context) {
+      context.waitUntil(
+        agent(env)
+          .fetch("https://agent.internal/ensure", { method: "POST" })
+          .then(() => undefined),
+      );
+    }
+    return response;
   }
   if (url.pathname.startsWith("/api/") || url.pathname === "/control") {
     return Response.json({ error: "NOT_FOUND" }, { status: 404 });
@@ -82,8 +98,12 @@ export async function handleRequest(
   return env.ASSETS.fetch(request);
 }
 
-function agent(env: RequestEnvironment): AgentFetcher {
-  return env.AGENT.getByName(AGENT_NAME);
+function agent(env: RequestEnvironment): InternalFetcher {
+  return env.AGENT.getByName(INSTANCE_NAME);
+}
+
+function state(env: RequestEnvironment): InternalFetcher {
+  return env.STATE.getByName(INSTANCE_NAME);
 }
 
 function authorizedRequest(request: Request, secret: string): boolean {

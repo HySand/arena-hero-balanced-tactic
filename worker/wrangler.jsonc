@@ -40,12 +40,20 @@
         "name": "AGENT",
         "class_name": "ArenaHeroAgent",
       },
+      {
+        "name": "STATE",
+        "class_name": "ArenaHeroState",
+      },
     ],
   },
   "migrations": [
     {
       "tag": "v1",
       "new_sqlite_classes": ["ArenaHeroAgent"],
+    },
+    {
+      "tag": "v2",
+      "new_sqlite_classes": ["ArenaHeroState"],
     },
   ],
   "observability": {

@@ -1,19 +1,14 @@
 import { DurableObject } from "cloudflare:workers";
 
-import type {
-  CommandPlan,
-  DecisionSummary,
-  ReceivedData,
-  StrategyMemory,
-} from "./contracts";
-import { isControlAction } from "./control";
+import type { CommandPlan, ReceivedData, StrategyMemory } from "./contracts";
 import { decodeGameMessage, serializePlan } from "./protocol";
+import type { StoredSubmission, WorkerQueueMessage } from "./queue-message";
+import type {
+  AgentRuntimeSnapshot,
+  ArenaHeroState,
+  DiagnosticRecord,
+} from "./state";
 import { emptyMemory, planTick, safeFallbackPlan } from "./strategy/planner";
-import {
-  DEFAULT_CONFIG,
-  parseStrategyConfig,
-  type StrategyConfig,
-} from "./strategy/config";
 import { validatePlan } from "./strategy/validation";
 
 const GAME_WS_URL = "https://api.arenahero.io/api/v1/game/ws";
@@ -24,31 +19,13 @@ const CONNECTION_STALE_MS = 90_000;
 
 export interface Env extends Cloudflare.Env {
   ASSETS: Fetcher;
-  COMMAND_QUEUE: Queue<StoredSubmission>;
+  COMMAND_QUEUE: Queue<WorkerQueueMessage>;
+  STATE: DurableObjectNamespace<ArenaHeroState>;
   ARENA_HERO_API_KEY: string;
   ADMIN_CONTROL_SECRET: string;
 }
 
-type DesiredState = "running" | "stopped";
 type ConnectionPhase = "idle" | "connecting" | "open" | "blocked";
-
-interface StoredState {
-  desired: DesiredState;
-  authBlocked: boolean;
-  memory: StrategyMemory;
-}
-
-export interface StoredSubmission {
-  tick: number;
-  key: string;
-  body: string;
-}
-
-interface StoredStatus {
-  tick: number;
-  updatedAt: string;
-  summary?: DecisionSummary;
-}
 
 interface StoredConnectionStatus {
   lastConnectedAt?: string;
@@ -57,18 +34,6 @@ interface StoredConnectionStatus {
   lastError?: string | null;
   reconnectAttempt?: number;
   nextReconnectAt?: string | null;
-}
-
-interface DiagnosticRecord {
-  at: string;
-  event: string;
-  tick?: number;
-  details?: Record<string, string | number | boolean | null>;
-}
-
-interface DiagnosticSnapshot {
-  current?: DiagnosticRecord;
-  recent: DiagnosticRecord[];
 }
 
 function structuredLog(
@@ -86,68 +51,17 @@ function jitteredBackoff(attempt: number): number {
   return Math.floor(base * (0.75 + Math.random() * 0.5));
 }
 
-function jsonResponse(body: unknown, status = 200): Response {
-  return Response.json(body, { status });
-}
-
 export class ArenaHeroAgent extends DurableObject<Env> {
   private socket: WebSocket | undefined;
   private phase: ConnectionPhase = "idle";
   private reconnectAttempt = 0;
   private announcedTick: number | undefined;
   private lastMessageAt = 0;
-  private strategyConfig: StrategyConfig | undefined;
   private receipts: Partial<Record<"AGENT" | "MANUAL", ReceivedData>> = {};
   private messageChain: Promise<void> = Promise.resolve();
 
   override async fetch(request: Request): Promise<Response> {
     const path = new URL(request.url).pathname;
-    if (request.method === "POST" && path === "/control") {
-      const data: unknown = await request.json();
-      if (!isControlAction(data))
-        return jsonResponse({ error: "INVALID_CONTROL" }, 400);
-      return this.setDesiredState(
-        data.action === "start" ? "running" : "stopped",
-      );
-    }
-    if (path === "/config" && request.method === "GET") {
-      return jsonResponse(await this.getStrategyConfig());
-    }
-    if (path === "/config" && request.method === "PUT") {
-      try {
-        const config = parseStrategyConfig(await request.json());
-        await this.ctx.storage.put({
-          strategyConfig: config,
-          configUpdatedAt: new Date().toISOString(),
-        });
-        this.strategyConfig = config;
-        return jsonResponse({ ok: true, config });
-      } catch (error) {
-        return jsonResponse(
-          { error: error instanceof Error ? error.message : "INVALID_CONFIG" },
-          422,
-        );
-      }
-    }
-    if (path === "/status" && request.method === "GET") {
-      return this.statusResponse();
-    }
-    if (path === "/logs" && request.method === "GET") {
-      return jsonResponse(await this.diagnosticSnapshot());
-    }
-    if (path === "/submission-result" && request.method === "POST") {
-      const value: unknown = await request.json();
-      if (typeof value !== "object" || value === null || Array.isArray(value)) {
-        return jsonResponse({ error: "INVALID_RESULT" }, 400);
-      }
-      const result = value as Record<string, unknown>;
-      if (typeof result.event !== "string" || !Number.isInteger(result.tick)) {
-        return jsonResponse({ error: "INVALID_RESULT" }, 400);
-      }
-      const details = diagnosticDetails(result.details);
-      await this.recordDiagnostic(result.event, result.tick as number, details);
-      return new Response(null, { status: 204 });
-    }
     if (request.method === "POST" && path === "/ensure") {
       await this.scheduleEnsure();
       return new Response(null, { status: 204 });
@@ -159,71 +73,22 @@ export class ArenaHeroAgent extends DurableObject<Env> {
     await this.ensureRunning();
   }
 
-  private async loadState(): Promise<StoredState> {
-    const [desired, authBlocked, memory] = await Promise.all([
-      this.ctx.storage.get<DesiredState>("desired"),
-      this.ctx.storage.get<boolean>("authBlocked"),
-      this.ctx.storage.get<StrategyMemory>("strategyMemory"),
-    ]);
-    const resolvedDesired = desired ?? "running";
-    if (!desired) await this.ctx.storage.put("desired", resolvedDesired);
-    return {
-      desired: resolvedDesired,
-      authBlocked: authBlocked ?? false,
-      memory: memory ?? emptyMemory(),
-    };
-  }
-
-  private async getStrategyConfig(): Promise<StrategyConfig> {
-    if (this.strategyConfig) return this.strategyConfig;
-    this.strategyConfig =
-      (await this.ctx.storage.get<StrategyConfig>("strategyConfig")) ??
-      DEFAULT_CONFIG;
-    return this.strategyConfig;
-  }
-
-  private async statusResponse(): Promise<Response> {
-    if (this.phase === "idle") await this.scheduleEnsure();
-    const [desired, authBlocked, status, configUpdatedAt, connection] =
-      await Promise.all([
-        this.ctx.storage.get<DesiredState>("desired"),
-        this.ctx.storage.get<boolean>("authBlocked"),
-        this.ctx.storage.get<StoredStatus>("lastStatus"),
-        this.ctx.storage.get<string>("configUpdatedAt"),
-        this.ctx.storage.get<StoredConnectionStatus>("connectionStatus"),
-      ]);
-    return jsonResponse({
-      desired: desired ?? "running",
-      phase: this.phase,
-      connected: this.phase === "open",
-      authBlocked: authBlocked ?? false,
-      tick: status?.tick,
-      updatedAt: status?.updatedAt,
-      configUpdatedAt,
-      summary: status?.summary,
-      connection,
-    });
-  }
-
-  private async setDesiredState(desired: DesiredState): Promise<Response> {
-    await this.ctx.storage.put("desired", desired);
-    if (desired === "stopped") {
-      this.phase = "idle";
-      this.socket?.close(1000, "stopped");
-      this.socket = undefined;
-      await this.ctx.storage.deleteAlarm();
-    } else {
-      await this.ctx.storage.put("authBlocked", false);
-      if (this.phase === "blocked") this.phase = "idle";
-      await this.scheduleEnsure();
+  private async runtimeSnapshot(): Promise<AgentRuntimeSnapshot> {
+    const response = await this.state().fetch("https://state.internal/runtime");
+    if (!response.ok) {
+      throw new Error(`State runtime read failed: ${response.status}`);
     }
-    return jsonResponse({ desired });
+    return response.json<AgentRuntimeSnapshot>();
   }
 
   private async ensureRunning(): Promise<void> {
-    const stored = await this.loadState();
-    if (stored.desired !== "running" || stored.authBlocked) {
-      this.phase = stored.authBlocked ? "blocked" : "idle";
+    const runtime = await this.runtimeSnapshot();
+    if (runtime.desired !== "running" || runtime.authBlocked) {
+      this.phase = runtime.authBlocked ? "blocked" : "idle";
+      this.socket?.close(1000, runtime.authBlocked ? "blocked" : "stopped");
+      this.socket = undefined;
+      await this.ctx.storage.deleteAlarm();
+      await this.updateConnectionStatus({}, runtime.authBlocked);
       return;
     }
     if (this.phase === "connecting") return;
@@ -251,7 +116,10 @@ export class ArenaHeroAgent extends DurableObject<Env> {
 
   private async connectGame(): Promise<void> {
     this.phase = "connecting";
-    await this.recordDiagnostic("connect_started");
+    await Promise.all([
+      this.updateConnectionStatus({}),
+      this.recordDiagnostic("connect_started"),
+    ]);
     let response: Response;
     try {
       response = await fetchWithTimeout(
@@ -392,10 +260,11 @@ export class ArenaHeroAgent extends DurableObject<Env> {
       await this.env.COMMAND_QUEUE.send(existing, { contentType: "json" });
       return;
     }
-    const [storedMemory, config] = await Promise.all([
+    const [storedMemory, runtime] = await Promise.all([
       this.ctx.storage.get<StrategyMemory>("strategyMemory"),
-      this.getStrategyConfig(),
+      this.runtimeSnapshot(),
     ]);
+    const config = runtime.config;
     const memory = storedMemory ?? emptyMemory();
     let plan: CommandPlan;
     let nextMemory = memory;
@@ -423,14 +292,19 @@ export class ArenaHeroAgent extends DurableObject<Env> {
       plan = safeFallbackPlan(tick, state);
     }
     await this.recordDiagnostic("status_save_started", tick);
-    await this.ctx.storage.put({
-      strategyMemory: nextMemory,
-      lastStatus: {
-        tick,
-        updatedAt: new Date().toISOString(),
-        ...(summary ? { summary } : {}),
-      } satisfies StoredStatus,
-    });
+    const status = {
+      tick,
+      updatedAt: new Date().toISOString(),
+      ...(summary ? { summary } : {}),
+    };
+    await Promise.all([
+      this.ctx.storage.put("strategyMemory", nextMemory),
+      this.state().fetch("https://state.internal/status-update", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(status),
+      }),
+    ]);
     await this.recordDiagnostic("status_saved", tick);
     structuredLog("plan_computed", {
       tick,
@@ -477,15 +351,16 @@ export class ArenaHeroAgent extends DurableObject<Env> {
     this.phase = "blocked";
     this.socket?.close(1000, "blocked");
     this.socket = undefined;
-    await this.ctx.storage.put("authBlocked", true);
-    await this.ctx.storage.deleteAlarm();
+    await Promise.all([
+      this.ctx.storage.deleteAlarm(),
+      this.updateConnectionStatus({}, true),
+    ]);
     structuredLog("agent_blocked", { reason });
   }
 
   private async scheduleReconnect(): Promise<void> {
-    const desired =
-      (await this.ctx.storage.get<DesiredState>("desired")) ?? "running";
-    if (desired !== "running" || this.phase === "blocked") return;
+    const runtime = await this.runtimeSnapshot();
+    if (runtime.desired !== "running" || this.phase === "blocked") return;
     this.phase = "idle";
     const waitMs = jitteredBackoff(this.reconnectAttempt);
     this.reconnectAttempt += 1;
@@ -503,17 +378,6 @@ export class ArenaHeroAgent extends DurableObject<Env> {
     });
   }
 
-  private async diagnosticSnapshot(): Promise<DiagnosticSnapshot> {
-    const [current, recent] = await Promise.all([
-      this.ctx.storage.get<DiagnosticRecord>("diagnosticCurrent"),
-      this.ctx.storage.get<DiagnosticRecord[]>("diagnosticRecent"),
-    ]);
-    return {
-      ...(current === undefined ? {} : { current }),
-      recent: recent ?? [],
-    };
-  }
-
   private async recordDiagnostic(
     event: string,
     tick?: number,
@@ -525,45 +389,31 @@ export class ArenaHeroAgent extends DurableObject<Env> {
       ...(tick === undefined ? {} : { tick }),
       ...(details === undefined ? {} : { details }),
     };
-    const recent =
-      (await this.ctx.storage.get<DiagnosticRecord[]>("diagnosticRecent")) ??
-      [];
-    await this.ctx.storage.put({
-      diagnosticCurrent: record,
-      diagnosticRecent: [...recent, record].slice(-40),
+    await this.state().fetch("https://state.internal/diagnostic", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(record),
     });
   }
 
   private async updateConnectionStatus(
     update: Partial<StoredConnectionStatus>,
+    authBlocked?: boolean,
   ): Promise<void> {
-    const current =
-      (await this.ctx.storage.get<StoredConnectionStatus>(
-        "connectionStatus",
-      )) ?? {};
-    await this.ctx.storage.put("connectionStatus", { ...current, ...update });
+    await this.state().fetch("https://state.internal/connection-update", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        phase: this.phase,
+        ...(authBlocked === undefined ? {} : { authBlocked }),
+        connection: update,
+      }),
+    });
   }
-}
 
-function diagnosticDetails(
-  value: unknown,
-): Record<string, string | number | boolean | null> | undefined {
-  if (typeof value !== "object" || value === null || Array.isArray(value)) {
-    return undefined;
+  private state(): DurableObjectStub {
+    return this.env.STATE.getByName("arena-hero-primary");
   }
-  const source = value as Record<string, unknown>;
-  const details: Record<string, string | number | boolean | null> = {};
-  for (const [key, item] of Object.entries(source)) {
-    if (
-      typeof item === "string" ||
-      typeof item === "number" ||
-      typeof item === "boolean" ||
-      item === null
-    ) {
-      details[key] = item;
-    }
-  }
-  return details;
 }
 
 function messageEnvelopeHint(raw: string): string {

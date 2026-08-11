@@ -10,7 +10,7 @@
 - 启动或停止 Agent。
 - 读取、编辑和恢复策略配置默认值。
 
-策略配置存储在现有的 `ArenaHeroAgent` Durable Object 中，与 Agent 运行状态保持强一致；保存成功后从下一 Tick 起使用新配置。配置数据只有几 KB，并在 DO 实例内缓存；正常人工管理只产生极少量持久化读写，不会接近 Durable Objects 免费额度。
+策略配置、前端状态和诊断日志存储在独立的 `ArenaHeroState` Durable Object 中；`ArenaHeroAgent` 只负责游戏 WebSocket、策略计算和策略记忆。这样即使游戏连接事件繁忙，前端配置、状态和控制接口也不会排队等待 Agent DO。配置保存成功后从下一 Tick 起使用新值。
 
 读取配置、配置 schema 和状态无需管理员 Token。保存配置、启动或停止 Agent 时需要 `ADMIN_CONTROL_SECRET`。前端只把该 Token 写入当前标签页的 `sessionStorage`，不会把 Token 存入 Durable Object。
 

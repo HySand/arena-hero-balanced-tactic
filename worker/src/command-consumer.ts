@@ -1,11 +1,11 @@
-import type { StoredSubmission } from "./supervisor";
+import type { StoredSubmission } from "./queue-message";
 
 const COMMAND_URL = "https://api.arenahero.io/api/v1/game/commands";
 const COMMAND_TIMEOUT_MS = 5000;
 const RESULT_TIMEOUT_MS = 2000;
 
 interface CommandConsumerEnv {
-  AGENT: {
+  STATE: {
     getByName(name: string): {
       fetch(input: RequestInfo | URL, init?: RequestInit): Promise<Response>;
     };
@@ -65,7 +65,9 @@ async function consumeCommand(
     return;
   }
 
-  void response.body?.cancel().catch(() => undefined);
+  const payload = await safeJson(response);
+  const errorCode =
+    typeof payload?.error === "string" ? payload.error : undefined;
   if (response.status === 202) {
     await reportSubmissionResult(env, {
       event: "command_accepted",
@@ -76,11 +78,15 @@ async function consumeCommand(
     return;
   }
 
-  if (response.status >= 500) {
+  if (response.status >= 500 || errorCode === "COMMAND_CONCURRENCY_LIMIT") {
     await reportSubmissionResult(env, {
       event: "command_retry_scheduled",
       tick: submission.tick,
-      details: { status: response.status, attempts: message.attempts },
+      details: {
+        status: response.status,
+        attempts: message.attempts,
+        ...(errorCode ? { error: errorCode } : {}),
+      },
     });
     message.retry({ delaySeconds: 1 });
     return;
@@ -89,7 +95,11 @@ async function consumeCommand(
   await reportSubmissionResult(env, {
     event: "command_rejected",
     tick: submission.tick,
-    details: { status: response.status, attempts: message.attempts },
+    details: {
+      status: response.status,
+      attempts: message.attempts,
+      ...(errorCode ? { error: errorCode } : {}),
+    },
   });
   message.ack();
 }
@@ -98,20 +108,25 @@ async function reportSubmissionResult(
   env: CommandConsumerEnv,
   result: SubmissionResult,
 ): Promise<void> {
-  const stub = env.AGENT.getByName("arena-hero-primary");
+  const stub = env.STATE.getByName("arena-hero-primary");
   try {
     const response = await promiseWithTimeout(
-      stub.fetch("https://agent.internal/submission-result", {
+      stub.fetch("https://state.internal/diagnostic", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(result),
+        body: JSON.stringify({
+          at: new Date().toISOString(),
+          event: result.event,
+          tick: result.tick,
+          details: result.details,
+        }),
       }),
       RESULT_TIMEOUT_MS,
     );
     if (!response.ok) {
       console.error(
         JSON.stringify({
-          event: "submission_result_rejected",
+          event: "command_diagnostic_rejected",
           status: response.status,
           tick: result.tick,
         }),
@@ -120,7 +135,7 @@ async function reportSubmissionResult(
   } catch (error) {
     console.error(
       JSON.stringify({
-        event: "submission_result_failed",
+        event: "command_diagnostic_failed",
         reason: errorName(error),
         tick: result.tick,
       }),
@@ -157,6 +172,19 @@ async function promiseWithTimeout<T>(
     return await Promise.race([promise, timeout]);
   } finally {
     if (timeoutId !== undefined) clearTimeout(timeoutId);
+  }
+}
+
+async function safeJson(
+  response: Response,
+): Promise<Record<string, unknown> | undefined> {
+  try {
+    const value: unknown = await response.json();
+    return typeof value === "object" && value !== null && !Array.isArray(value)
+      ? (value as Record<string, unknown>)
+      : undefined;
+  } catch {
+    return undefined;
   }
 }
 

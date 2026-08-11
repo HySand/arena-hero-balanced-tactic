@@ -14,7 +14,7 @@ function testContext() {
   const retry = vi.fn();
   const env = {
     ARENA_HERO_API_KEY: "arena-token",
-    AGENT: {
+    STATE: {
       getByName: vi.fn(() => ({
         fetch: vi.fn((_input: RequestInfo | URL, init?: RequestInit) => {
           const body = typeof init?.body === "string" ? init.body : "{}";
@@ -45,13 +45,12 @@ describe("command queue consumer", () => {
 
     expect(context.ack).toHaveBeenCalledOnce();
     expect(context.retry).not.toHaveBeenCalled();
-    expect(context.results).toEqual([
-      {
-        event: "command_accepted",
-        tick: 42,
-        details: { status: 202, attempts: 1 },
-      },
-    ]);
+    expect(context.results).toHaveLength(1);
+    expect(context.results[0]).toMatchObject({
+      event: "command_accepted",
+      tick: 42,
+      details: { status: 202, attempts: 1 },
+    });
     expect(arenaFetch).toHaveBeenCalledWith(
       "https://api.arenahero.io/api/v1/game/commands",
       expect.objectContaining({ method: "POST", body: submission.body }),
@@ -72,13 +71,12 @@ describe("command queue consumer", () => {
 
     expect(context.ack).not.toHaveBeenCalled();
     expect(context.retry).toHaveBeenCalledWith({ delaySeconds: 1 });
-    expect(context.results).toEqual([
-      {
-        event: "command_retry_scheduled",
-        tick: 42,
-        details: { reason: "TimeoutError", attempts: 1 },
-      },
-    ]);
+    expect(context.results).toHaveLength(1);
+    expect(context.results[0]).toMatchObject({
+      event: "command_retry_scheduled",
+      tick: 42,
+      details: { reason: "TimeoutError", attempts: 1 },
+    });
   });
 
   it("acks non-retryable command rejections", async () => {
@@ -92,12 +90,41 @@ describe("command queue consumer", () => {
 
     expect(context.ack).toHaveBeenCalledOnce();
     expect(context.retry).not.toHaveBeenCalled();
-    expect(context.results).toEqual([
-      {
-        event: "command_rejected",
-        tick: 42,
-        details: { status: 400, attempts: 1 },
+    expect(context.results).toHaveLength(1);
+    expect(context.results[0]).toMatchObject({
+      event: "command_rejected",
+      tick: 42,
+      details: { status: 400, attempts: 1 },
+    });
+  });
+
+  it("retries Arena concurrency-limit responses", async () => {
+    const context = testContext();
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(() =>
+        Promise.resolve(
+          Response.json(
+            { error: "COMMAND_CONCURRENCY_LIMIT" },
+            { status: 409 },
+          ),
+        ),
+      ),
+    );
+
+    await consumeCommandMessages([context.message], context.env);
+
+    expect(context.ack).not.toHaveBeenCalled();
+    expect(context.retry).toHaveBeenCalledWith({ delaySeconds: 1 });
+    expect(context.results).toHaveLength(1);
+    expect(context.results[0]).toMatchObject({
+      event: "command_retry_scheduled",
+      tick: 42,
+      details: {
+        status: 409,
+        attempts: 1,
+        error: "COMMAND_CONCURRENCY_LIMIT",
       },
-    ]);
+    });
   });
 });

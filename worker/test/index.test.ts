@@ -4,20 +4,20 @@ import { authorized } from "../src/control";
 import { handleRequest } from "../src/router";
 import { DEFAULT_CONFIG } from "../src/strategy/config";
 
+interface InternalFetcher {
+  fetch(input: RequestInfo | URL, init?: RequestInit): Promise<Response>;
+}
+
 interface TestEnvironment {
   ADMIN_CONTROL_SECRET: string;
-  AGENT: {
-    getByName(name: string): {
-      fetch(input: RequestInfo | URL, init?: RequestInit): Promise<Response>;
-    };
-  };
-  ASSETS: {
-    fetch(input: RequestInfo | URL, init?: RequestInit): Promise<Response>;
-  };
+  AGENT: { getByName(name: string): InternalFetcher };
+  STATE: { getByName(name: string): InternalFetcher };
+  ASSETS: InternalFetcher;
 }
 
 function testEnvironment() {
   const agentRequests: Request[] = [];
+  const stateRequests: Request[] = [];
   const assetRequests: Request[] = [];
   const env: TestEnvironment = {
     ADMIN_CONTROL_SECRET: "secret-value",
@@ -28,6 +28,18 @@ function testEnvironment() {
           fetch: (input, init) => {
             const request = new Request(input, init);
             agentRequests.push(request);
+            return Promise.resolve(new Response(null, { status: 204 }));
+          },
+        };
+      },
+    },
+    STATE: {
+      getByName: (name) => {
+        expect(name).toBe("arena-hero-primary");
+        return {
+          fetch: (input, init) => {
+            const request = new Request(input, init);
+            stateRequests.push(request);
             return Promise.resolve(
               Response.json({
                 ok: true,
@@ -46,7 +58,7 @@ function testEnvironment() {
       },
     },
   };
-  return { env, agentRequests, assetRequests };
+  return { env, agentRequests, stateRequests, assetRequests };
 }
 
 describe("control authentication", () => {
@@ -60,8 +72,8 @@ describe("control authentication", () => {
 });
 
 describe("worker request routing", () => {
-  it("serves public metadata without calling the Durable Object", async () => {
-    const { env, agentRequests } = testEnvironment();
+  it("serves public metadata without calling Durable Objects", async () => {
+    const { env, agentRequests, stateRequests } = testEnvironment();
     const health = await handleRequest(
       new Request("https://worker.example/api/health"),
       env,
@@ -79,6 +91,7 @@ describe("worker request routing", () => {
     expect(schema.status).toBe(200);
     expect(await schema.json()).toMatchObject({ version: 1 });
     expect(agentRequests).toHaveLength(0);
+    expect(stateRequests).toHaveLength(0);
   });
 
   it("forwards frontend routes to the static assets binding", async () => {
@@ -93,8 +106,8 @@ describe("worker request routing", () => {
     expect(new URL(assetRequests[0]!.url).pathname).toBe("/");
   });
 
-  it("forwards configuration and status reads to the Durable Object", async () => {
-    const { env, agentRequests } = testEnvironment();
+  it("forwards configuration and status reads to the State DO", async () => {
+    const { env, agentRequests, stateRequests } = testEnvironment();
     const config = await handleRequest(
       new Request("https://worker.example/api/config"),
       env,
@@ -107,12 +120,13 @@ describe("worker request routing", () => {
     expect(config.status).toBe(200);
     expect(status.status).toBe(200);
     expect(
-      agentRequests.map((request) => new URL(request.url).pathname),
+      stateRequests.map((request) => new URL(request.url).pathname),
     ).toEqual(["/config", "/status"]);
+    expect(agentRequests).toHaveLength(0);
   });
 
   it("hides protected endpoints when the bearer token is missing", async () => {
-    const { env, agentRequests } = testEnvironment();
+    const { env, agentRequests, stateRequests } = testEnvironment();
     const response = await handleRequest(
       new Request("https://worker.example/api/config", {
         method: "PUT",
@@ -123,10 +137,11 @@ describe("worker request routing", () => {
 
     expect(response.status).toBe(404);
     expect(agentRequests).toHaveLength(0);
+    expect(stateRequests).toHaveLength(0);
   });
 
-  it("protects and forwards diagnostic logs", async () => {
-    const { env, agentRequests } = testEnvironment();
+  it("protects and forwards diagnostic logs to the State DO", async () => {
+    const { env, agentRequests, stateRequests } = testEnvironment();
     const hidden = await handleRequest(
       new Request("https://worker.example/api/logs"),
       env,
@@ -140,12 +155,13 @@ describe("worker request routing", () => {
 
     expect(hidden.status).toBe(404);
     expect(visible.status).toBe(200);
-    expect(agentRequests).toHaveLength(1);
-    expect(new URL(agentRequests[0]!.url).pathname).toBe("/logs");
+    expect(stateRequests).toHaveLength(1);
+    expect(new URL(stateRequests[0]!.url).pathname).toBe("/logs");
+    expect(agentRequests).toHaveLength(0);
   });
 
-  it("forwards authorized configuration writes", async () => {
-    const { env, agentRequests } = testEnvironment();
+  it("forwards authorized configuration writes to the State DO", async () => {
+    const { env, agentRequests, stateRequests } = testEnvironment();
     const body = JSON.stringify(DEFAULT_CONFIG);
     const response = await handleRequest(
       new Request("https://worker.example/api/config", {
@@ -157,13 +173,14 @@ describe("worker request routing", () => {
     );
 
     expect(response.status).toBe(200);
-    expect(agentRequests).toHaveLength(1);
-    expect(agentRequests[0]!.method).toBe("PUT");
-    expect(await agentRequests[0]!.text()).toBe(body);
+    expect(stateRequests).toHaveLength(1);
+    expect(stateRequests[0]!.method).toBe("PUT");
+    expect(await stateRequests[0]!.text()).toBe(body);
+    expect(agentRequests).toHaveLength(0);
   });
 
   it("rejects oversized protected requests before forwarding", async () => {
-    const { env, agentRequests } = testEnvironment();
+    const { env, agentRequests, stateRequests } = testEnvironment();
     const response = await handleRequest(
       new Request("https://worker.example/api/config", {
         method: "PUT",
@@ -179,10 +196,15 @@ describe("worker request routing", () => {
     expect(response.status).toBe(413);
     expect(await response.json()).toEqual({ error: "REQUEST_TOO_LARGE" });
     expect(agentRequests).toHaveLength(0);
+    expect(stateRequests).toHaveLength(0);
   });
 
-  it("validates control actions before forwarding", async () => {
-    const { env, agentRequests } = testEnvironment();
+  it("persists control actions before notifying the Agent", async () => {
+    const { env, agentRequests, stateRequests } = testEnvironment();
+    const background: Promise<unknown>[] = [];
+    const context = {
+      waitUntil: (promise: Promise<unknown>) => background.push(promise),
+    };
     const invalid = await handleRequest(
       new Request("https://worker.example/api/control", {
         method: "POST",
@@ -190,6 +212,7 @@ describe("worker request routing", () => {
         body: JSON.stringify({ action: "restart" }),
       }),
       env,
+      context,
     );
     const valid = await handleRequest(
       new Request("https://worker.example/control", {
@@ -198,13 +221,17 @@ describe("worker request routing", () => {
         body: JSON.stringify({ action: "start" }),
       }),
       env,
+      context,
     );
+    await Promise.all(background);
 
     expect(invalid.status).toBe(400);
     expect(await invalid.json()).toEqual({ error: "INVALID_CONTROL" });
     expect(valid.status).toBe(200);
+    expect(stateRequests).toHaveLength(1);
+    expect(new URL(stateRequests[0]!.url).pathname).toBe("/control");
     expect(agentRequests).toHaveLength(1);
-    expect(new URL(agentRequests[0]!.url).pathname).toBe("/control");
+    expect(new URL(agentRequests[0]!.url).pathname).toBe("/ensure");
   });
 
   it("returns JSON 404 for unknown API routes", async () => {
