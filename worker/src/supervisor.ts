@@ -266,9 +266,12 @@ export class ArenaHeroAgent extends DurableObject<Env> {
           const reason = errorName(error);
           structuredLog("message_failed", { reason });
           this.ctx.waitUntil(
-            this.updateConnectionStatus({
-              lastError: `message_failed:${reason}`,
-            }),
+            Promise.all([
+              this.updateConnectionStatus({
+                lastError: `message_failed:${reason}`,
+              }),
+              this.recordDiagnostic("message_failed", undefined, { reason }),
+            ]).then(() => undefined),
           );
         });
     });
@@ -296,6 +299,10 @@ export class ArenaHeroAgent extends DurableObject<Env> {
 
   private async handleMessage(socket: WebSocket, raw: string): Promise<void> {
     if (this.socket !== socket) return;
+    await this.recordDiagnostic("ws_text_received", undefined, {
+      bytes: new TextEncoder().encode(raw).byteLength,
+      envelope: messageEnvelopeHint(raw),
+    });
     const message = decodeGameMessage(raw);
     if (!message) {
       structuredLog("ws_message_rejected");
@@ -544,6 +551,14 @@ export class ArenaHeroAgent extends DurableObject<Env> {
       )) ?? {};
     await this.ctx.storage.put("connectionStatus", { ...current, ...update });
   }
+}
+
+function messageEnvelopeHint(raw: string): string {
+  const prefix = raw.slice(0, 80);
+  if (/"type"\s*:\s*"tick"/.test(prefix)) return "tick";
+  if (/"type"\s*:\s*"state"/.test(prefix)) return "state";
+  if (/"type"\s*:\s*"received"/.test(prefix)) return "received";
+  return "unknown";
 }
 
 function errorName(error: unknown): string {
