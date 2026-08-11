@@ -3,7 +3,12 @@ import { DurableObject } from "cloudflare:workers";
 import type { StoredSubmission } from "./arena-command";
 import type { CommandPlan, ReceivedData, StrategyMemory } from "./contracts";
 import { PRIMARY_STATE_INSTANCE } from "./instances";
-import { decodeStrategyMemory, encodeStrategyMemory } from "./memory-storage";
+import {
+  compactStrategyMemory,
+  decodeStrategyMemory,
+  encodeStrategyMemory,
+  strategyMemorySize,
+} from "./memory-storage";
 import { decodeGameMessage, serializePlan } from "./protocol";
 import type { AgentRuntimeSnapshot, ArenaHeroState } from "./state";
 import { emptyMemory, planTick, safeFallbackPlan } from "./strategy/planner";
@@ -190,6 +195,7 @@ export class ArenaHeroAgent extends DurableObject<Env> {
             }),
           );
         });
+      this.ctx.waitUntil(this.messageChain);
     });
     socket.addEventListener("close", (event) => {
       this.ctx.waitUntil(this.handleClose(socket, event.code));
@@ -264,18 +270,29 @@ export class ArenaHeroAgent extends DurableObject<Env> {
       this.dispatchSubmission(existing);
       return;
     }
-    const [memory, runtime] = await Promise.all([
+    const [storedMemory, runtime] = await Promise.all([
       this.loadStrategyMemory(),
       this.runtimeSnapshot(),
     ]);
+    const originalSize = strategyMemorySize(storedMemory);
+    const memory = compactStrategyMemory(storedMemory, state);
+    const compactedSize = strategyMemorySize(memory);
+    if (memory !== storedMemory) {
+      this.strategyMemory = memory;
+      structuredLog("strategy_memory_compacted", {
+        tick,
+        before: originalSize,
+        after: compactedSize,
+      });
+    }
     const config = runtime.config;
     let plan: CommandPlan;
     let nextMemory = memory;
     let summary: ReturnType<typeof planTick>["summary"] | undefined;
     this.recordDiagnostic("planner_started", tick, {
-      obstacles: Object.keys(memory.obstacles).length,
-      explored: Object.keys(memory.explored).length,
-      resources: Object.keys(memory.resources).length,
+      obstacles: compactedSize.obstacles,
+      explored: compactedSize.explored,
+      resources: compactedSize.resources,
       enemies: Object.keys(memory.enemies).length,
     });
     try {

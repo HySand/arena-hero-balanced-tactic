@@ -10,7 +10,7 @@
 - 启动或停止 Agent。
 - 读取、编辑和恢复策略配置默认值。
 
-策略配置和前端状态存储在主 `ArenaHeroState` Durable Object 中，命令结果日志存储在另一个独立实例；日志存储异常不会中断 Tick。`ArenaHeroAgent` 只负责游戏 WebSocket、策略计算和策略记忆，其运行轨迹写入 Cloudflare 结构化日志。每个 Tick 的命令通过无状态 `ArenaCommandDispatcher` Worker entrypoint 在后台提交，Arena HTTP 不在 Durable Object 内执行，单次请求异常或超时不会重置 Agent 或阻塞后续 Tick、前端接口。配置保存成功后从下一 Tick 起使用新值。
+策略配置和前端状态存储在主 `ArenaHeroState` Durable Object 中，命令结果日志存储在另一个独立实例；日志存储异常不会中断 Tick。`ArenaHeroAgent` 只负责游戏 WebSocket、策略计算和策略记忆，其运行轨迹写入 Cloudflare 结构化日志。WebSocket 消息链注册到 Durable Object 事件生命周期，增长过大的地图记忆会围绕当前单位、敌人和资源自动裁剪到固定预算。每个 Tick 的命令通过无状态 `ArenaCommandDispatcher` Worker entrypoint 在后台提交，Arena HTTP 不在 Durable Object 内执行，单次请求异常或超时不会重置 Agent 或阻塞后续 Tick、前端接口。配置保存成功后从下一 Tick 起使用新值。
 
 读取配置、配置 schema 和状态无需管理员 Token。保存配置、启动或停止 Agent 时需要 `ADMIN_CONTROL_SECRET`。前端只把该 Token 写入当前标签页的 `sessionStorage`，不会把 Token 存入 Durable Object。
 
