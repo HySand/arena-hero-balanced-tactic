@@ -19,6 +19,8 @@ import { validatePlan } from "./strategy/validation";
 const GAME_WS_URL = "https://api.arenahero.io/api/v1/game/ws";
 const RECONNECT_MIN_MS = 250;
 const RECONNECT_MAX_MS = 5000;
+const WS_CONNECT_TIMEOUT_MS = 5000;
+const CONNECTION_STALE_MS = 90_000;
 
 export interface Env extends Cloudflare.Env {
   ASSETS: Fetcher;
@@ -93,6 +95,7 @@ export class ArenaHeroAgent extends DurableObject<Env> {
   private phase: ConnectionPhase = "idle";
   private reconnectAttempt = 0;
   private announcedTick: number | undefined;
+  private lastMessageAt = 0;
   private strategyConfig: StrategyConfig | undefined;
   private receipts: Partial<Record<"AGENT" | "MANUAL", ReceivedData>> = {};
   private messageChain: Promise<void> = Promise.resolve();
@@ -146,7 +149,7 @@ export class ArenaHeroAgent extends DurableObject<Env> {
       return new Response(null, { status: 204 });
     }
     if (request.method === "POST" && path === "/ensure") {
-      await this.ensureRunning();
+      await this.scheduleEnsure();
       return new Response(null, { status: 204 });
     }
     return new Response(null, { status: 404 });
@@ -180,7 +183,7 @@ export class ArenaHeroAgent extends DurableObject<Env> {
   }
 
   private async statusResponse(): Promise<Response> {
-    if (this.phase === "idle") this.ctx.waitUntil(this.ensureRunning());
+    if (this.phase === "idle") await this.scheduleEnsure();
     const [desired, authBlocked, status, configUpdatedAt, connection] =
       await Promise.all([
         this.ctx.storage.get<DesiredState>("desired"),
@@ -212,7 +215,7 @@ export class ArenaHeroAgent extends DurableObject<Env> {
     } else {
       await this.ctx.storage.put("authBlocked", false);
       if (this.phase === "blocked") this.phase = "idle";
-      await this.ensureRunning();
+      await this.scheduleEnsure();
     }
     return jsonResponse({ desired });
   }
@@ -223,8 +226,27 @@ export class ArenaHeroAgent extends DurableObject<Env> {
       this.phase = stored.authBlocked ? "blocked" : "idle";
       return;
     }
-    if (this.phase === "connecting" || this.phase === "open") return;
+    if (this.phase === "connecting") return;
+    if (
+      this.phase === "open" &&
+      Date.now() - this.lastMessageAt < CONNECTION_STALE_MS
+    ) {
+      return;
+    }
+    if (this.phase === "open") {
+      structuredLog("ws_stale", { lastMessageAt: this.lastMessageAt });
+      await this.recordDiagnostic("ws_stale", undefined, {
+        idleMs: Date.now() - this.lastMessageAt,
+      });
+      this.socket?.close(1012, "stale");
+      this.socket = undefined;
+      this.phase = "idle";
+    }
     await this.connectGame();
+  }
+
+  private async scheduleEnsure(): Promise<void> {
+    await this.ctx.storage.setAlarm(Date.now());
   }
 
   private async connectGame(): Promise<void> {
@@ -232,18 +254,25 @@ export class ArenaHeroAgent extends DurableObject<Env> {
     await this.recordDiagnostic("connect_started");
     let response: Response;
     try {
-      response = await fetch(GAME_WS_URL, {
-        headers: {
-          Authorization: `Bearer ${this.env.ARENA_HERO_API_KEY}`,
-          Upgrade: "websocket",
+      response = await fetchWithTimeout(
+        GAME_WS_URL,
+        {
+          headers: {
+            Authorization: `Bearer ${this.env.ARENA_HERO_API_KEY}`,
+            Upgrade: "websocket",
+          },
         },
-      });
+        WS_CONNECT_TIMEOUT_MS,
+      );
     } catch (error) {
       const reason = errorName(error);
       structuredLog("ws_connect_failed", { reason });
-      await this.updateConnectionStatus({
-        lastError: `ws_connect_failed:${reason}`,
-      });
+      await Promise.all([
+        this.updateConnectionStatus({
+          lastError: `ws_connect_failed:${reason}`,
+        }),
+        this.recordDiagnostic("ws_connect_failed", undefined, { reason }),
+      ]);
       await this.scheduleReconnect();
       return;
     }
@@ -264,11 +293,13 @@ export class ArenaHeroAgent extends DurableObject<Env> {
     const socket = response.webSocket;
     this.socket = socket;
     this.phase = "open";
+    this.lastMessageAt = Date.now();
     this.reconnectAttempt = 0;
     this.announcedTick = undefined;
     socket.accept();
     socket.addEventListener("message", (event) => {
       if (this.socket !== socket) return;
+      this.lastMessageAt = Date.now();
       if (typeof event.data !== "string") {
         structuredLog("ws_binary_ignored");
         return;
@@ -439,7 +470,7 @@ export class ArenaHeroAgent extends DurableObject<Env> {
       return;
     }
     structuredLog("ws_closed", { code });
-    await this.scheduleReconnect(true);
+    await this.scheduleReconnect();
   }
 
   private async blockAuthentication(reason: string): Promise<void> {
@@ -451,7 +482,7 @@ export class ArenaHeroAgent extends DurableObject<Env> {
     structuredLog("agent_blocked", { reason });
   }
 
-  private async scheduleReconnect(retryInline = false): Promise<void> {
+  private async scheduleReconnect(): Promise<void> {
     const desired =
       (await this.ctx.storage.get<DesiredState>("desired")) ?? "running";
     if (desired !== "running" || this.phase === "blocked") return;
@@ -470,9 +501,6 @@ export class ArenaHeroAgent extends DurableObject<Env> {
       attempt: this.reconnectAttempt,
       waitMs,
     });
-    if (!retryInline) return;
-    await delay(waitMs);
-    if (this.phase === "idle") await this.ensureRunning();
   }
 
   private async diagnosticSnapshot(): Promise<DiagnosticSnapshot> {
@@ -550,6 +578,25 @@ function errorName(error: unknown): string {
   return error instanceof Error ? error.name : "UnknownError";
 }
 
-function delay(milliseconds: number): Promise<void> {
-  return new Promise((resolve) => setTimeout(resolve, milliseconds));
+async function fetchWithTimeout(
+  input: RequestInfo | URL,
+  init: RequestInit,
+  timeoutMs: number,
+): Promise<Response> {
+  const controller = new AbortController();
+  let timeoutId: ReturnType<typeof setTimeout> | undefined;
+  const timeout = new Promise<never>((_, reject) => {
+    timeoutId = setTimeout(() => {
+      controller.abort();
+      reject(new DOMException("Request timeout", "TimeoutError"));
+    }, timeoutMs);
+  });
+  try {
+    return await Promise.race([
+      fetch(input, { ...init, signal: controller.signal }),
+      timeout,
+    ]);
+  } finally {
+    if (timeoutId !== undefined) clearTimeout(timeoutId);
+  }
 }

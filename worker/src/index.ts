@@ -1,5 +1,6 @@
-import type { Env, StoredSubmission } from "./supervisor";
+import { consumeCommandMessages } from "./command-consumer";
 import { handleRequest } from "./router";
+import type { Env, StoredSubmission } from "./supervisor";
 
 export { handleRequest } from "./router";
 export { ArenaHeroAgent } from "./supervisor";
@@ -21,36 +22,6 @@ export default {
   },
 
   async queue(batch: MessageBatch<StoredSubmission>, env: Env): Promise<void> {
-    for (const message of batch.messages) {
-      const submission = message.body;
-      const response = await fetch(
-        "https://api.arenahero.io/api/v1/game/commands",
-        {
-          method: "POST",
-          headers: {
-            Authorization: `Bearer ${env.ARENA_HERO_API_KEY}`,
-            "Content-Type": "application/json",
-            "Idempotency-Key": submission.key,
-          },
-          body: submission.body,
-        },
-      );
-      const stub = env.AGENT.getByName(AGENT_NAME);
-      await stub.fetch("https://agent.internal/submission-result", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          event:
-            response.status === 202 ? "command_accepted" : "command_rejected",
-          tick: submission.tick,
-          details: { status: response.status, attempts: message.attempts },
-        }),
-      });
-      if (response.status >= 500) {
-        message.retry({ delaySeconds: 1 });
-      } else {
-        message.ack();
-      }
-    }
+    await consumeCommandMessages(batch.messages, env);
   },
 } satisfies ExportedHandler<Env, StoredSubmission>;
