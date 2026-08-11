@@ -1,6 +1,7 @@
 import { DurableObject } from "cloudflare:workers";
 
 import type { CommandPlan, ReceivedData, StrategyMemory } from "./contracts";
+import { decodeStrategyMemory, encodeStrategyMemory } from "./memory-storage";
 import { decodeGameMessage, serializePlan } from "./protocol";
 import type { StoredSubmission, WorkerQueueMessage } from "./queue-message";
 import type {
@@ -57,6 +58,7 @@ export class ArenaHeroAgent extends DurableObject<Env> {
   private reconnectAttempt = 0;
   private announcedTick: number | undefined;
   private lastMessageAt = 0;
+  private strategyMemory: StrategyMemory | undefined;
   private receipts: Partial<Record<"AGENT" | "MANUAL", ReceivedData>> = {};
   private messageChain: Promise<void> = Promise.resolve();
 
@@ -79,6 +81,18 @@ export class ArenaHeroAgent extends DurableObject<Env> {
       throw new Error(`State runtime read failed: ${response.status}`);
     }
     return response.json<AgentRuntimeSnapshot>();
+  }
+
+  private async loadStrategyMemory(): Promise<StrategyMemory> {
+    if (this.strategyMemory) return this.strategyMemory;
+    const [compressed, legacy] = await Promise.all([
+      this.ctx.storage.get<ArrayBuffer>("strategyMemoryGzip"),
+      this.ctx.storage.get<StrategyMemory>("strategyMemory"),
+    ]);
+    this.strategyMemory = compressed
+      ? await decodeStrategyMemory(compressed)
+      : (legacy ?? emptyMemory());
+    return this.strategyMemory;
   }
 
   private async ensureRunning(): Promise<void> {
@@ -260,12 +274,11 @@ export class ArenaHeroAgent extends DurableObject<Env> {
       await this.env.COMMAND_QUEUE.send(existing, { contentType: "json" });
       return;
     }
-    const [storedMemory, runtime] = await Promise.all([
-      this.ctx.storage.get<StrategyMemory>("strategyMemory"),
+    const [memory, runtime] = await Promise.all([
+      this.loadStrategyMemory(),
       this.runtimeSnapshot(),
     ]);
     const config = runtime.config;
-    const memory = storedMemory ?? emptyMemory();
     let plan: CommandPlan;
     let nextMemory = memory;
     let summary: ReturnType<typeof planTick>["summary"] | undefined;
@@ -291,20 +304,32 @@ export class ArenaHeroAgent extends DurableObject<Env> {
       structuredLog("planner_failed", { tick, reason });
       plan = safeFallbackPlan(tick, state);
     }
-    await this.recordDiagnostic("status_save_started", tick);
+    const submission: StoredSubmission = {
+      tick: plan.tick,
+      key: `agent-${plan.tick}-primary`,
+      body: serializePlan(plan),
+    };
+    await this.env.COMMAND_QUEUE.send(submission, {
+      contentType: "json",
+    });
+    await this.recordDiagnostic("command_submit_queued", tick);
+
     const status = {
       tick,
       updatedAt: new Date().toISOString(),
       ...(summary ? { summary } : {}),
     };
-    await Promise.all([
-      this.ctx.storage.put("strategyMemory", nextMemory),
-      this.state().fetch("https://state.internal/status-update", {
+    const statusResponse = await this.state().fetch(
+      "https://state.internal/status-update",
+      {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(status),
-      }),
-    ]);
+      },
+    );
+    if (!statusResponse.ok) {
+      throw new Error(`State status update failed: ${statusResponse.status}`);
+    }
     await this.recordDiagnostic("status_saved", tick);
     structuredLog("plan_computed", {
       tick,
@@ -316,15 +341,17 @@ export class ArenaHeroAgent extends DurableObject<Env> {
       planningMs: summary ? Math.round(summary.planningMs) : undefined,
       actions: summary?.actions ?? {},
     });
-    const submission: StoredSubmission = {
-      tick: plan.tick,
-      key: `agent-${plan.tick}-primary`,
-      body: serializePlan(plan),
-    };
-    await this.ctx.storage.put("lastSubmission", submission);
-    await this.recordDiagnostic("command_submit_queued", tick);
-    await this.env.COMMAND_QUEUE.send(submission, {
-      contentType: "json",
+
+    const checkpointStartedAt = Date.now();
+    this.strategyMemory = nextMemory;
+    const compressedMemory = await encodeStrategyMemory(nextMemory);
+    await this.ctx.storage.put({
+      strategyMemoryGzip: compressedMemory,
+      lastSubmission: submission,
+    });
+    await this.recordDiagnostic("memory_checkpoint_saved", tick, {
+      bytes: compressedMemory.byteLength,
+      durationMs: Date.now() - checkpointStartedAt,
     });
   }
 
