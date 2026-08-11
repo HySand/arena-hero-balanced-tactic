@@ -17,13 +17,12 @@ import {
 import { validatePlan } from "./strategy/validation";
 
 const GAME_WS_URL = "https://api.arenahero.io/api/v1/game/ws";
-const COMMAND_URL = "https://api.arenahero.io/api/v1/game/commands";
 const RECONNECT_MIN_MS = 250;
 const RECONNECT_MAX_MS = 5000;
-const COMMAND_TIMEOUT_MS = 5000;
 
 export interface Env extends Cloudflare.Env {
   ASSETS: Fetcher;
+  COMMAND_QUEUE: Queue<StoredSubmission>;
   ARENA_HERO_API_KEY: string;
   ADMIN_CONTROL_SECRET: string;
 }
@@ -37,7 +36,7 @@ interface StoredState {
   memory: StrategyMemory;
 }
 
-interface StoredSubmission {
+export interface StoredSubmission {
   tick: number;
   key: string;
   body: string;
@@ -97,8 +96,6 @@ export class ArenaHeroAgent extends DurableObject<Env> {
   private strategyConfig: StrategyConfig | undefined;
   private receipts: Partial<Record<"AGENT" | "MANUAL", ReceivedData>> = {};
   private messageChain: Promise<void> = Promise.resolve();
-  private submissionActive = false;
-  private pendingSubmission: StoredSubmission | undefined;
 
   override async fetch(request: Request): Promise<Response> {
     const path = new URL(request.url).pathname;
@@ -134,6 +131,19 @@ export class ArenaHeroAgent extends DurableObject<Env> {
     }
     if (path === "/logs" && request.method === "GET") {
       return jsonResponse(await this.diagnosticSnapshot());
+    }
+    if (path === "/submission-result" && request.method === "POST") {
+      const value: unknown = await request.json();
+      if (typeof value !== "object" || value === null || Array.isArray(value)) {
+        return jsonResponse({ error: "INVALID_RESULT" }, 400);
+      }
+      const result = value as Record<string, unknown>;
+      if (typeof result.event !== "string" || !Number.isInteger(result.tick)) {
+        return jsonResponse({ error: "INVALID_RESULT" }, 400);
+      }
+      const details = diagnosticDetails(result.details);
+      await this.recordDiagnostic(result.event, result.tick as number, details);
+      return new Response(null, { status: 204 });
     }
     if (request.method === "POST" && path === "/ensure") {
       await this.ensureRunning();
@@ -348,7 +358,7 @@ export class ArenaHeroAgent extends DurableObject<Env> {
       await this.ctx.storage.get<StoredSubmission>("lastSubmission");
     if (existing?.tick === tick) {
       structuredLog("plan_replay", { tick });
-      await this.submitSerialized(existing);
+      await this.env.COMMAND_QUEUE.send(existing, { contentType: "json" });
       return;
     }
     const [storedMemory, config] = await Promise.all([
@@ -408,108 +418,9 @@ export class ArenaHeroAgent extends DurableObject<Env> {
     };
     await this.ctx.storage.put("lastSubmission", submission);
     await this.recordDiagnostic("command_submit_queued", tick);
-    this.queueSubmission(submission);
-  }
-
-  private queueSubmission(submission: StoredSubmission): void {
-    this.pendingSubmission = submission;
-    if (this.submissionActive) return;
-    this.submissionActive = true;
-    const task = this.drainSubmissions().finally(() => {
-      this.submissionActive = false;
-      if (this.pendingSubmission) this.queueSubmission(this.pendingSubmission);
+    await this.env.COMMAND_QUEUE.send(submission, {
+      contentType: "json",
     });
-    this.ctx.waitUntil(task);
-  }
-
-  private async drainSubmissions(): Promise<void> {
-    while (this.pendingSubmission) {
-      const submission = this.pendingSubmission;
-      this.pendingSubmission = undefined;
-      try {
-        await this.submitSerialized(submission);
-      } catch (error) {
-        const reason = errorName(error);
-        await this.recordDiagnostic("command_task_failed", submission.tick, {
-          reason,
-        });
-        structuredLog("command_task_failed", {
-          tick: submission.tick,
-          reason,
-        });
-      }
-    }
-  }
-
-  private async submitSerialized(submission: StoredSubmission): Promise<void> {
-    for (let attempt = 0; attempt < 3; attempt += 1) {
-      let response: Response;
-      try {
-        await this.recordDiagnostic("command_submit_started", submission.tick, {
-          attempt,
-        });
-        response = await fetchWithTimeout(
-          COMMAND_URL,
-          {
-            method: "POST",
-            headers: {
-              Authorization: `Bearer ${this.env.ARENA_HERO_API_KEY}`,
-              "Content-Type": "application/json",
-              "Idempotency-Key": submission.key,
-            },
-            body: submission.body,
-          },
-          COMMAND_TIMEOUT_MS,
-        );
-      } catch (error) {
-        const reason = errorName(error);
-        await this.recordDiagnostic(
-          "command_transport_failed",
-          submission.tick,
-          {
-            attempt,
-            reason,
-          },
-        );
-        structuredLog("plan_transport_failed", {
-          tick: submission.tick,
-          attempt,
-          reason,
-        });
-        if (attempt < 2) await delay(jitteredBackoff(attempt));
-        continue;
-      }
-
-      if (response.status === 202) {
-        void response.body?.cancel().catch(() => undefined);
-        await this.recordDiagnostic("command_accepted", submission.tick, {
-          attempt,
-        });
-        structuredLog("plan_accepted", { tick: submission.tick, attempt });
-        return;
-      }
-      const payload = await safeJson(response, COMMAND_TIMEOUT_MS);
-      const errorCode =
-        typeof payload?.error === "string" ? payload.error : undefined;
-      if (response.status === 401) {
-        await this.blockAuthentication("command_401");
-        return;
-      }
-      if (
-        response.status === 500 ||
-        errorCode === "COMMAND_CONCURRENCY_LIMIT"
-      ) {
-        if (attempt < 2) await delay(jitteredBackoff(attempt));
-        continue;
-      }
-      structuredLog("plan_rejected", {
-        tick: submission.tick,
-        status: response.status,
-        error: errorCode,
-      });
-      return;
-    }
-    structuredLog("plan_retry_exhausted", { tick: submission.tick });
   }
 
   private async handleClose(socket: WebSocket, code: number): Promise<void> {
@@ -606,27 +517,25 @@ export class ArenaHeroAgent extends DurableObject<Env> {
   }
 }
 
-async function fetchWithTimeout(
-  input: RequestInfo | URL,
-  init: RequestInit,
-  timeoutMs: number,
-): Promise<Response> {
-  const controller = new AbortController();
-  let timeoutId: ReturnType<typeof setTimeout> | undefined;
-  const timeout = new Promise<never>((_, reject) => {
-    timeoutId = setTimeout(() => {
-      controller.abort();
-      reject(new DOMException("Request timeout", "TimeoutError"));
-    }, timeoutMs);
-  });
-  try {
-    return await Promise.race([
-      fetch(input, { ...init, signal: controller.signal }),
-      timeout,
-    ]);
-  } finally {
-    if (timeoutId !== undefined) clearTimeout(timeoutId);
+function diagnosticDetails(
+  value: unknown,
+): Record<string, string | number | boolean | null> | undefined {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) {
+    return undefined;
   }
+  const source = value as Record<string, unknown>;
+  const details: Record<string, string | number | boolean | null> = {};
+  for (const [key, item] of Object.entries(source)) {
+    if (
+      typeof item === "string" ||
+      typeof item === "number" ||
+      typeof item === "boolean" ||
+      item === null
+    ) {
+      details[key] = item;
+    }
+  }
+  return details;
 }
 
 function messageEnvelopeHint(raw: string): string {
@@ -643,23 +552,4 @@ function errorName(error: unknown): string {
 
 function delay(milliseconds: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, milliseconds));
-}
-
-async function safeJson(
-  response: Response,
-  timeoutMs = COMMAND_TIMEOUT_MS,
-): Promise<Record<string, unknown> | undefined> {
-  try {
-    const value: unknown = await Promise.race([
-      response.json(),
-      delay(timeoutMs).then(() => {
-        throw new DOMException("Response body timeout", "TimeoutError");
-      }),
-    ]);
-    return typeof value === "object" && value !== null && !Array.isArray(value)
-      ? (value as Record<string, unknown>)
-      : undefined;
-  } catch {
-    return undefined;
-  }
 }
