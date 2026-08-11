@@ -1,8 +1,7 @@
-import { consumeCommandMessages } from "./command-consumer";
-import type { WorkerQueueMessage } from "./queue-message";
 import { handleRequest } from "./router";
 import type { Env } from "./supervisor";
 
+export { ArenaHeroCommandBroker } from "./command-broker";
 export { handleRequest } from "./router";
 export { ArenaHeroState } from "./state";
 export { ArenaHeroAgent } from "./supervisor";
@@ -30,11 +29,4 @@ export default {
         .then(() => undefined),
     );
   },
-
-  async queue(
-    batch: MessageBatch<WorkerQueueMessage>,
-    env: Env,
-  ): Promise<void> {
-    await consumeCommandMessages(batch.messages, env);
-  },
-} satisfies ExportedHandler<Env, WorkerQueueMessage>;
+} satisfies ExportedHandler<Env>;

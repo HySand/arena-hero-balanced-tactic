@@ -16,24 +16,6 @@
   "triggers": {
     "crons": ["* * * * *"],
   },
-  "queues": {
-    "producers": [
-      {
-        "binding": "COMMAND_QUEUE",
-        "queue": "arena-hero-command-submissions",
-      },
-    ],
-    "consumers": [
-      {
-        "queue": "arena-hero-command-submissions",
-        "max_batch_size": 1,
-        "max_batch_timeout": 1,
-        "max_retries": 2,
-        "max_concurrency": 1,
-        "retry_delay": 1,
-      },
-    ],
-  },
   "durable_objects": {
     "bindings": [
       {
@@ -43,6 +25,10 @@
       {
         "name": "STATE",
         "class_name": "ArenaHeroState",
+      },
+      {
+        "name": "BROKER",
+        "class_name": "ArenaHeroCommandBroker",
       },
     ],
   },
@@ -54,6 +40,10 @@
     {
       "tag": "v2",
       "new_sqlite_classes": ["ArenaHeroState"],
+    },
+    {
+      "tag": "v3",
+      "new_sqlite_classes": ["ArenaHeroCommandBroker"],
     },
   ],
   "observability": {

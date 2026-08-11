@@ -1,9 +1,10 @@
 import { DurableObject } from "cloudflare:workers";
 
+import type { StoredSubmission } from "./arena-command";
+import type { ArenaHeroCommandBroker } from "./command-broker";
 import type { CommandPlan, ReceivedData, StrategyMemory } from "./contracts";
 import { decodeStrategyMemory, encodeStrategyMemory } from "./memory-storage";
 import { decodeGameMessage, serializePlan } from "./protocol";
-import type { StoredSubmission, WorkerQueueMessage } from "./queue-message";
 import type {
   AgentRuntimeSnapshot,
   ArenaHeroState,
@@ -20,7 +21,7 @@ const CONNECTION_STALE_MS = 90_000;
 
 export interface Env extends Cloudflare.Env {
   ASSETS: Fetcher;
-  COMMAND_QUEUE: Queue<WorkerQueueMessage>;
+  BROKER: DurableObjectNamespace<ArenaHeroCommandBroker>;
   STATE: DurableObjectNamespace<ArenaHeroState>;
   ARENA_HERO_API_KEY: string;
   ADMIN_CONTROL_SECRET: string;
@@ -271,7 +272,7 @@ export class ArenaHeroAgent extends DurableObject<Env> {
       await this.ctx.storage.get<StoredSubmission>("lastSubmission");
     if (existing?.tick === tick) {
       structuredLog("plan_replay", { tick });
-      await this.env.COMMAND_QUEUE.send(existing, { contentType: "json" });
+      await this.forwardSubmission(existing);
       return;
     }
     const [memory, runtime] = await Promise.all([
@@ -309,10 +310,8 @@ export class ArenaHeroAgent extends DurableObject<Env> {
       key: `agent-${plan.tick}-primary`,
       body: serializePlan(plan),
     };
-    await this.env.COMMAND_QUEUE.send(submission, {
-      contentType: "json",
-    });
-    await this.recordDiagnostic("command_submit_queued", tick);
+    await this.forwardSubmission(submission);
+    await this.recordDiagnostic("command_submit_forwarded", tick);
 
     const status = {
       tick,
@@ -438,7 +437,21 @@ export class ArenaHeroAgent extends DurableObject<Env> {
     });
   }
 
-  private state(): DurableObjectStub {
+  private async forwardSubmission(submission: StoredSubmission): Promise<void> {
+    const response = await this.env.BROKER.getByName(submission.key).fetch(
+      "https://broker.internal/submit",
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(submission),
+      },
+    );
+    if (!response.ok) {
+      throw new Error(`Command broker rejected: ${response.status}`);
+    }
+  }
+
+  private state(): DurableObjectStub<ArenaHeroState> {
     return this.env.STATE.getByName("arena-hero-primary");
   }
 }
