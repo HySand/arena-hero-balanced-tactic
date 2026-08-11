@@ -1,7 +1,6 @@
 import { DurableObject } from "cloudflare:workers";
 
 import type { StoredSubmission } from "./arena-command";
-import type { ArenaHeroCommandBroker } from "./command-broker";
 import type { CommandPlan, ReceivedData, StrategyMemory } from "./contracts";
 import { decodeStrategyMemory, encodeStrategyMemory } from "./memory-storage";
 import { decodeGameMessage, serializePlan } from "./protocol";
@@ -21,7 +20,6 @@ const CONNECTION_STALE_MS = 90_000;
 
 export interface Env extends Cloudflare.Env {
   ASSETS: Fetcher;
-  BROKER: DurableObjectNamespace<ArenaHeroCommandBroker>;
   STATE: DurableObjectNamespace<ArenaHeroState>;
   ARENA_HERO_API_KEY: string;
   ADMIN_CONTROL_SECRET: string;
@@ -438,16 +436,15 @@ export class ArenaHeroAgent extends DurableObject<Env> {
   }
 
   private async forwardSubmission(submission: StoredSubmission): Promise<void> {
-    const response = await this.env.BROKER.getByName(submission.key).fetch(
-      "https://broker.internal/submit",
-      {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(submission),
-      },
-    );
+    const response = await this.env.STATE.getByName(
+      `command-${submission.key}`,
+    ).fetch("https://state.internal/submit", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(submission),
+    });
     if (!response.ok) {
-      throw new Error(`Command broker rejected: ${response.status}`);
+      throw new Error(`Command state rejected: ${response.status}`);
     }
   }
 

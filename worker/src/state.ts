@@ -1,5 +1,6 @@
 import { DurableObject } from "cloudflare:workers";
 
+import { submitArenaCommand, type StoredSubmission } from "./arena-command";
 import type { DecisionSummary } from "./contracts";
 import { isControlAction } from "./control";
 import {
@@ -39,13 +40,47 @@ export interface DiagnosticRecord {
   details?: Record<string, string | number | boolean | null>;
 }
 
+interface StateEnv extends Cloudflare.Env {
+  STATE: DurableObjectNamespace<ArenaHeroState>;
+  ARENA_HERO_API_KEY: string;
+}
+
 function jsonResponse(body: unknown, status = 200): Response {
   return Response.json(body, { status });
 }
 
-export class ArenaHeroState extends DurableObject<Cloudflare.Env> {
+export class ArenaHeroState extends DurableObject<StateEnv> {
+  private submitting = false;
+
   override async fetch(request: Request): Promise<Response> {
     const path = new URL(request.url).pathname;
+    if (path === "/submit" && request.method === "POST") {
+      const submission = await request.json<StoredSubmission>();
+      if (
+        !Number.isInteger(submission.tick) ||
+        typeof submission.key !== "string" ||
+        typeof submission.body !== "string"
+      ) {
+        return jsonResponse({ error: "INVALID_SUBMISSION" }, 400);
+      }
+      if (!this.submitting) {
+        this.submitting = true;
+        void this.submitCommand(submission)
+          .catch((error: unknown) => {
+            console.error(
+              JSON.stringify({
+                event: "command_state_submit_failed",
+                reason: errorName(error),
+                tick: submission.tick,
+              }),
+            );
+          })
+          .finally(() => {
+            this.submitting = false;
+          });
+      }
+      return new Response(null, { status: 202 });
+    }
     if (path === "/config" && request.method === "GET") {
       return jsonResponse(await this.getConfig());
     }
@@ -142,6 +177,30 @@ export class ArenaHeroState extends DurableObject<Cloudflare.Env> {
     return new Response(null, { status: 404 });
   }
 
+  private async submitCommand(submission: StoredSubmission): Promise<void> {
+    const result = await submitArenaCommand(
+      submission,
+      this.env.ARENA_HERO_API_KEY,
+    );
+    const record: DiagnosticRecord = {
+      at: new Date().toISOString(),
+      event: result.event,
+      tick: result.tick,
+      details: result.details,
+    };
+    const response = await this.env.STATE.getByName("arena-hero-primary").fetch(
+      "https://state.internal/diagnostic",
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(record),
+      },
+    );
+    if (!response.ok) {
+      throw new Error(`Command diagnostic rejected: ${response.status}`);
+    }
+  }
+
   private async getConfig(): Promise<StrategyConfig> {
     return (
       (await this.ctx.storage.get<StrategyConfig>("strategyConfig")) ??
@@ -185,4 +244,8 @@ export class ArenaHeroState extends DurableObject<Cloudflare.Env> {
       connection,
     });
   }
+}
+
+function errorName(error: unknown): string {
+  return error instanceof Error ? error.name : "UnknownError";
 }

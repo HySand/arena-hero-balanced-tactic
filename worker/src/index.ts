@@ -1,7 +1,6 @@
 import { handleRequest } from "./router";
 import type { Env } from "./supervisor";
 
-export { ArenaHeroCommandBroker } from "./command-broker";
 export { handleRequest } from "./router";
 export { ArenaHeroState } from "./state";
 export { ArenaHeroAgent } from "./supervisor";

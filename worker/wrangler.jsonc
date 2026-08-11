@@ -26,10 +26,6 @@
         "name": "STATE",
         "class_name": "ArenaHeroState",
       },
-      {
-        "name": "BROKER",
-        "class_name": "ArenaHeroCommandBroker",
-      },
     ],
   },
   "migrations": [
@@ -40,10 +36,6 @@
     {
       "tag": "v2",
       "new_sqlite_classes": ["ArenaHeroState"],
-    },
-    {
-      "tag": "v3",
-      "new_sqlite_classes": ["ArenaHeroCommandBroker"],
     },
   ],
   "observability": {

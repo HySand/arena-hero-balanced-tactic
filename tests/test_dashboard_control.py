@@ -4,6 +4,7 @@ import json
 import tempfile
 import threading
 import unittest
+from unittest.mock import patch
 import urllib.error
 import urllib.request
 from pathlib import Path
@@ -146,6 +147,35 @@ class ControlQueueTests(unittest.TestCase):
 
             self.assertEqual(worker.action, ("WAIT",))
             self.assertEqual([item["status"] for item in receipts], ["superseded", "applied"])
+
+    def test_latest_command_wins_when_clock_does_not_advance(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            queue = root / "queue"
+            worker = FakeUnit(2, UnitType.WORKER)
+            base = {
+                "target_type": "UNIT",
+                "target_id": str(worker.id),
+                "observed_tick": 20,
+            }
+            with patch("arena_hero_tactic.dashboard.control.time.time_ns", return_value=1):
+                queue_control_command(
+                    {**base, "action": "MOVE", "direction": "UP"},
+                    queue,
+                )
+                queue_control_command({**base, "action": "WAIT"}, queue)
+
+            receipts = apply_control_commands(
+                FakeTurn(20, [worker]),
+                queue,
+                root / "receipt.json",
+            )
+
+            self.assertEqual(worker.action, ("WAIT",))
+            self.assertEqual(
+                [item["status"] for item in receipts],
+                ["superseded", "applied"],
+            )
 
     def test_core_spawn_and_ranger_shoot_use_typed_sdk_values(self) -> None:
         with tempfile.TemporaryDirectory() as directory:

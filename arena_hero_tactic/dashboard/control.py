@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import time
 from pathlib import Path
+from threading import Lock
 from typing import Any
 from uuid import UUID, uuid4
 
@@ -32,6 +33,8 @@ CONTROL_ACTIONS = frozenset(
 )
 CONTROL_DIRECTIONS = frozenset(item.value for item in Direction)
 CONTROL_UNIT_TYPES = frozenset(item.value for item in UnitType)
+_COMMAND_SEQUENCE_LOCK = Lock()
+_last_command_sequence = 0
 
 
 class ControlCommandError(ValueError):
@@ -143,6 +146,13 @@ def validate_control_document(document: Any) -> dict[str, Any]:
     return normalized
 
 
+def _next_command_sequence() -> int:
+    global _last_command_sequence
+    with _COMMAND_SEQUENCE_LOCK:
+        _last_command_sequence = max(time.time_ns(), _last_command_sequence + 1)
+        return _last_command_sequence
+
+
 def queue_control_command(document: Any, queue_dir: Path) -> dict[str, Any]:
     normalized = validate_control_document(document)
     command_id = str(uuid4())
@@ -153,7 +163,7 @@ def queue_control_command(document: Any, queue_dir: Path) -> dict[str, Any]:
         "created_at": created_at,
         "expires_tick": normalized["observed_tick"] + COMMAND_TTL_TICKS,
     }
-    filename = f"{time.time_ns():020d}-{command_id}.json"
+    filename = f"{_next_command_sequence():020d}-{command_id}.json"
     _atomic_write(queue_dir / filename, record)
     return record
 
