@@ -97,6 +97,7 @@ export class ArenaHeroAgent extends DurableObject<Env> {
   private strategyConfig: StrategyConfig | undefined;
   private receipts: Partial<Record<"AGENT" | "MANUAL", ReceivedData>> = {};
   private messageChain: Promise<void> = Promise.resolve();
+  private submissionTasks = new Set<Promise<void>>();
 
   override async fetch(request: Request): Promise<Response> {
     const path = new URL(request.url).pathname;
@@ -316,6 +317,9 @@ export class ArenaHeroAgent extends DurableObject<Env> {
         return;
       case "received":
         this.receipts[message.data.source] = message.data;
+        await this.recordDiagnostic("plan_received", message.data.tick, {
+          source: message.data.source,
+        });
         structuredLog("plan_received", {
           tick: message.data.tick,
           source: message.data.source,
@@ -402,24 +406,49 @@ export class ArenaHeroAgent extends DurableObject<Env> {
       body: serializePlan(plan),
     };
     await this.ctx.storage.put("lastSubmission", submission);
-    await this.recordDiagnostic("command_submit_started", tick);
-    await this.submitSerialized(submission);
+    await this.recordDiagnostic("command_submit_queued", tick);
+    this.queueSubmission(submission);
+  }
+
+  private queueSubmission(submission: StoredSubmission): void {
+    const task = this.submitSerialized(submission)
+      .catch(async (error: unknown) => {
+        const reason = errorName(error);
+        await this.recordDiagnostic("command_task_failed", submission.tick, {
+          reason,
+        });
+        structuredLog("command_task_failed", {
+          tick: submission.tick,
+          reason,
+        });
+      })
+      .finally(() => {
+        this.submissionTasks.delete(task);
+      });
+    this.submissionTasks.add(task);
+    this.ctx.waitUntil(task);
   }
 
   private async submitSerialized(submission: StoredSubmission): Promise<void> {
     for (let attempt = 0; attempt < 3; attempt += 1) {
       let response: Response;
       try {
-        response = await fetch(COMMAND_URL, {
-          method: "POST",
-          headers: {
-            Authorization: `Bearer ${this.env.ARENA_HERO_API_KEY}`,
-            "Content-Type": "application/json",
-            "Idempotency-Key": submission.key,
-          },
-          body: submission.body,
-          signal: AbortSignal.timeout(COMMAND_TIMEOUT_MS),
+        await this.recordDiagnostic("command_submit_started", submission.tick, {
+          attempt,
         });
+        response = await fetchWithTimeout(
+          COMMAND_URL,
+          {
+            method: "POST",
+            headers: {
+              Authorization: `Bearer ${this.env.ARENA_HERO_API_KEY}`,
+              "Content-Type": "application/json",
+              "Idempotency-Key": submission.key,
+            },
+            body: submission.body,
+          },
+          COMMAND_TIMEOUT_MS,
+        );
       } catch (error) {
         const reason = errorName(error);
         await this.recordDiagnostic(
@@ -562,6 +591,29 @@ export class ArenaHeroAgent extends DurableObject<Env> {
         "connectionStatus",
       )) ?? {};
     await this.ctx.storage.put("connectionStatus", { ...current, ...update });
+  }
+}
+
+async function fetchWithTimeout(
+  input: RequestInfo | URL,
+  init: RequestInit,
+  timeoutMs: number,
+): Promise<Response> {
+  const controller = new AbortController();
+  let timeoutId: ReturnType<typeof setTimeout> | undefined;
+  const timeout = new Promise<never>((_, reject) => {
+    timeoutId = setTimeout(() => {
+      controller.abort();
+      reject(new DOMException("Request timeout", "TimeoutError"));
+    }, timeoutMs);
+  });
+  try {
+    return await Promise.race([
+      fetch(input, { ...init, signal: controller.signal }),
+      timeout,
+    ]);
+  } finally {
+    if (timeoutId !== undefined) clearTimeout(timeoutId);
   }
 }
 
