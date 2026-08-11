@@ -48,6 +48,15 @@ interface StoredStatus {
   summary?: DecisionSummary;
 }
 
+interface StoredConnectionStatus {
+  lastConnectedAt?: string;
+  lastDisconnectedAt?: string;
+  lastCloseCode?: number;
+  lastError?: string | null;
+  reconnectAttempt?: number;
+  nextReconnectAt?: string | null;
+}
+
 function structuredLog(
   event: string,
   fields: Record<string, unknown> = {},
@@ -71,7 +80,7 @@ export class ArenaHeroAgent extends DurableObject<Env> {
   private socket: WebSocket | undefined;
   private phase: ConnectionPhase = "idle";
   private reconnectAttempt = 0;
-  private announcedTick?: number;
+  private announcedTick: number | undefined;
   private strategyConfig: StrategyConfig | undefined;
   private receipts: Partial<Record<"AGENT" | "MANUAL", ReceivedData>> = {};
   private messageChain: Promise<void> = Promise.resolve();
@@ -143,12 +152,15 @@ export class ArenaHeroAgent extends DurableObject<Env> {
   }
 
   private async statusResponse(): Promise<Response> {
-    const [desired, authBlocked, status, configUpdatedAt] = await Promise.all([
-      this.ctx.storage.get<DesiredState>("desired"),
-      this.ctx.storage.get<boolean>("authBlocked"),
-      this.ctx.storage.get<StoredStatus>("lastStatus"),
-      this.ctx.storage.get<string>("configUpdatedAt"),
-    ]);
+    if (this.phase === "idle") this.ctx.waitUntil(this.ensureRunning());
+    const [desired, authBlocked, status, configUpdatedAt, connection] =
+      await Promise.all([
+        this.ctx.storage.get<DesiredState>("desired"),
+        this.ctx.storage.get<boolean>("authBlocked"),
+        this.ctx.storage.get<StoredStatus>("lastStatus"),
+        this.ctx.storage.get<string>("configUpdatedAt"),
+        this.ctx.storage.get<StoredConnectionStatus>("connectionStatus"),
+      ]);
     return jsonResponse({
       desired: desired ?? "running",
       phase: this.phase,
@@ -158,6 +170,7 @@ export class ArenaHeroAgent extends DurableObject<Env> {
       updatedAt: status?.updatedAt,
       configUpdatedAt,
       summary: status?.summary,
+      connection,
     });
   }
 
@@ -197,7 +210,11 @@ export class ArenaHeroAgent extends DurableObject<Env> {
         },
       });
     } catch (error) {
-      structuredLog("ws_connect_failed", { reason: errorName(error) });
+      const reason = errorName(error);
+      structuredLog("ws_connect_failed", { reason });
+      await this.updateConnectionStatus({
+        lastError: `ws_connect_failed:${reason}`,
+      });
       await this.scheduleReconnect();
       return;
     }
@@ -208,6 +225,9 @@ export class ArenaHeroAgent extends DurableObject<Env> {
     }
     if (response.status !== 101 || !response.webSocket) {
       structuredLog("ws_upgrade_failed", { status: response.status });
+      await this.updateConnectionStatus({
+        lastError: `ws_upgrade_failed:${response.status}`,
+      });
       await this.scheduleReconnect();
       return;
     }
@@ -216,28 +236,49 @@ export class ArenaHeroAgent extends DurableObject<Env> {
     this.socket = socket;
     this.phase = "open";
     this.reconnectAttempt = 0;
+    this.announcedTick = undefined;
     socket.accept();
     socket.addEventListener("message", (event) => {
+      if (this.socket !== socket) return;
       if (typeof event.data !== "string") {
         structuredLog("ws_binary_ignored");
         return;
       }
       this.messageChain = this.messageChain
-        .then(() => this.handleMessage(event.data as string))
-        .catch((error: unknown) =>
-          structuredLog("message_failed", { reason: errorName(error) }),
-        );
+        .then(() => this.handleMessage(socket, event.data as string))
+        .catch((error: unknown) => {
+          const reason = errorName(error);
+          structuredLog("message_failed", { reason });
+          this.ctx.waitUntil(
+            this.updateConnectionStatus({
+              lastError: `message_failed:${reason}`,
+            }),
+          );
+        });
     });
     socket.addEventListener("close", (event) => {
-      void this.handleClose(event.code);
+      this.ctx.waitUntil(this.handleClose(socket, event.code));
     });
     socket.addEventListener("error", () => {
       structuredLog("ws_error");
+      this.ctx.waitUntil(
+        this.updateConnectionStatus({ lastError: "ws_error" }),
+      );
     });
+    await Promise.all([
+      this.ctx.storage.deleteAlarm(),
+      this.updateConnectionStatus({
+        lastConnectedAt: new Date().toISOString(),
+        lastError: null,
+        reconnectAttempt: 0,
+        nextReconnectAt: null,
+      }),
+    ]);
     structuredLog("ws_connected");
   }
 
-  private async handleMessage(raw: string): Promise<void> {
+  private async handleMessage(socket: WebSocket, raw: string): Promise<void> {
+    if (this.socket !== socket) return;
     const message = decodeGameMessage(raw);
     if (!message) {
       structuredLog("ws_message_rejected");
@@ -371,14 +412,23 @@ export class ArenaHeroAgent extends DurableObject<Env> {
     structuredLog("plan_retry_exhausted", { tick: submission.tick });
   }
 
-  private async handleClose(code: number): Promise<void> {
+  private async handleClose(socket: WebSocket, code: number): Promise<void> {
+    if (this.socket !== socket) {
+      structuredLog("ws_close_stale", { code });
+      return;
+    }
     this.socket = undefined;
+    this.announcedTick = undefined;
+    await this.updateConnectionStatus({
+      lastDisconnectedAt: new Date().toISOString(),
+      lastCloseCode: code,
+    });
     if (code === 1008) {
       await this.blockAuthentication("ws_1008");
       return;
     }
     structuredLog("ws_closed", { code });
-    await this.scheduleReconnect();
+    await this.scheduleReconnect(true);
   }
 
   private async blockAuthentication(reason: string): Promise<void> {
@@ -390,18 +440,38 @@ export class ArenaHeroAgent extends DurableObject<Env> {
     structuredLog("agent_blocked", { reason });
   }
 
-  private async scheduleReconnect(): Promise<void> {
+  private async scheduleReconnect(retryInline = false): Promise<void> {
     const desired =
       (await this.ctx.storage.get<DesiredState>("desired")) ?? "running";
     if (desired !== "running" || this.phase === "blocked") return;
     this.phase = "idle";
     const waitMs = jitteredBackoff(this.reconnectAttempt);
     this.reconnectAttempt += 1;
-    await this.ctx.storage.setAlarm(Date.now() + waitMs);
+    const reconnectAt = Date.now() + waitMs;
+    await Promise.all([
+      this.ctx.storage.setAlarm(reconnectAt),
+      this.updateConnectionStatus({
+        reconnectAttempt: this.reconnectAttempt,
+        nextReconnectAt: new Date(reconnectAt).toISOString(),
+      }),
+    ]);
     structuredLog("reconnect_scheduled", {
       attempt: this.reconnectAttempt,
       waitMs,
     });
+    if (!retryInline) return;
+    await delay(waitMs);
+    if (this.phase === "idle") await this.ensureRunning();
+  }
+
+  private async updateConnectionStatus(
+    update: Partial<StoredConnectionStatus>,
+  ): Promise<void> {
+    const current =
+      (await this.ctx.storage.get<StoredConnectionStatus>(
+        "connectionStatus",
+      )) ?? {};
+    await this.ctx.storage.put("connectionStatus", { ...current, ...update });
   }
 }
 
