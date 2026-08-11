@@ -1,7 +1,7 @@
 import { authorized, isControlAction } from "./control";
+import { DIAGNOSTIC_STATE_INSTANCE, PRIMARY_STATE_INSTANCE } from "./instances";
 import { CONFIG_SCHEMA } from "./strategy/config";
 
-const INSTANCE_NAME = "arena-hero-primary";
 const MAX_REQUEST_BYTES = 64 * 1024;
 
 interface InternalFetcher {
@@ -58,7 +58,7 @@ export async function handleRequest(
     if (!authorizedRequest(request, env.ADMIN_CONTROL_SECRET)) {
       return new Response(null, { status: 404 });
     }
-    return state(env).fetch("https://state.internal/logs");
+    return diagnostics(env).fetch("https://state.internal/logs");
   }
   if (
     (url.pathname === "/api/control" || url.pathname === "/control") &&
@@ -99,11 +99,15 @@ export async function handleRequest(
 }
 
 function agent(env: RequestEnvironment): InternalFetcher {
-  return env.AGENT.getByName(INSTANCE_NAME);
+  return env.AGENT.getByName(PRIMARY_STATE_INSTANCE);
 }
 
 function state(env: RequestEnvironment): InternalFetcher {
-  return env.STATE.getByName(INSTANCE_NAME);
+  return env.STATE.getByName(PRIMARY_STATE_INSTANCE);
+}
+
+function diagnostics(env: RequestEnvironment): InternalFetcher {
+  return env.STATE.getByName(DIAGNOSTIC_STATE_INSTANCE);
 }
 
 function authorizedRequest(request: Request, secret: string): boolean {

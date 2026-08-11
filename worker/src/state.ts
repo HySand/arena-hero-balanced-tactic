@@ -3,6 +3,7 @@ import { DurableObject } from "cloudflare:workers";
 import { submitArenaCommand, type StoredSubmission } from "./arena-command";
 import type { DecisionSummary } from "./contracts";
 import { isControlAction } from "./control";
+import { DIAGNOSTIC_STATE_INSTANCE } from "./instances";
 import {
   DEFAULT_CONFIG,
   parseStrategyConfig,
@@ -50,8 +51,6 @@ function jsonResponse(body: unknown, status = 200): Response {
 }
 
 export class ArenaHeroState extends DurableObject<StateEnv> {
-  private submitting = false;
-
   override async fetch(request: Request): Promise<Response> {
     const path = new URL(request.url).pathname;
     if (path === "/submit" && request.method === "POST") {
@@ -63,22 +62,7 @@ export class ArenaHeroState extends DurableObject<StateEnv> {
       ) {
         return jsonResponse({ error: "INVALID_SUBMISSION" }, 400);
       }
-      if (!this.submitting) {
-        this.submitting = true;
-        void this.submitCommand(submission)
-          .catch((error: unknown) => {
-            console.error(
-              JSON.stringify({
-                event: "command_state_submit_failed",
-                reason: errorName(error),
-                tick: submission.tick,
-              }),
-            );
-          })
-          .finally(() => {
-            this.submitting = false;
-          });
-      }
+      this.ctx.waitUntil(this.submitCommand(submission));
       return new Response(null, { status: 202 });
     }
     if (path === "/config" && request.method === "GET") {
@@ -188,16 +172,31 @@ export class ArenaHeroState extends DurableObject<StateEnv> {
       tick: result.tick,
       details: result.details,
     };
-    const response = await this.env.STATE.getByName("arena-hero-primary").fetch(
-      "https://state.internal/diagnostic",
-      {
+    try {
+      const response = await this.env.STATE.getByName(
+        DIAGNOSTIC_STATE_INSTANCE,
+      ).fetch("https://state.internal/diagnostic", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(record),
-      },
-    );
-    if (!response.ok) {
-      throw new Error(`Command diagnostic rejected: ${response.status}`);
+      });
+      if (!response.ok) {
+        console.error(
+          JSON.stringify({
+            event: "command_diagnostic_rejected",
+            status: response.status,
+            tick: submission.tick,
+          }),
+        );
+      }
+    } catch (error) {
+      console.error(
+        JSON.stringify({
+          event: "command_diagnostic_failed",
+          reason: errorName(error),
+          tick: submission.tick,
+        }),
+      );
     }
   }
 

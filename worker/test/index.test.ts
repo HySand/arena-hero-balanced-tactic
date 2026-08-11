@@ -1,6 +1,10 @@
 import { describe, expect, it } from "vitest";
 
 import { authorized } from "../src/control";
+import {
+  DIAGNOSTIC_STATE_INSTANCE,
+  PRIMARY_STATE_INSTANCE,
+} from "../src/instances";
 import { handleRequest } from "../src/router";
 import { DEFAULT_CONFIG } from "../src/strategy/config";
 
@@ -20,6 +24,7 @@ interface TestEnvironment {
 function testEnvironment() {
   const agentRequests: Request[] = [];
   const stateRequests: Request[] = [];
+  const stateNames: string[] = [];
   const assetRequests: Request[] = [];
   const env: TestEnvironment = {
     ADMIN_CONTROL_SECRET: "secret-value",
@@ -37,7 +42,7 @@ function testEnvironment() {
     },
     STATE: {
       getByName: (name) => {
-        expect(name).toBe("arena-hero-primary");
+        stateNames.push(name);
         return {
           fetch: (input, init) => {
             const request = new Request(input, init);
@@ -60,7 +65,7 @@ function testEnvironment() {
       },
     },
   };
-  return { env, agentRequests, stateRequests, assetRequests };
+  return { env, agentRequests, stateRequests, stateNames, assetRequests };
 }
 
 describe("control authentication", () => {
@@ -109,7 +114,7 @@ describe("worker request routing", () => {
   });
 
   it("forwards configuration and status reads to the State DO", async () => {
-    const { env, agentRequests, stateRequests } = testEnvironment();
+    const { env, agentRequests, stateRequests, stateNames } = testEnvironment();
     const config = await handleRequest(
       new Request("https://worker.example/api/config"),
       env,
@@ -124,6 +129,10 @@ describe("worker request routing", () => {
     expect(
       stateRequests.map((request) => new URL(request.url).pathname),
     ).toEqual(["/config", "/status"]);
+    expect(stateNames).toEqual([
+      PRIMARY_STATE_INSTANCE,
+      PRIMARY_STATE_INSTANCE,
+    ]);
     expect(agentRequests).toHaveLength(0);
   });
 
@@ -143,7 +152,7 @@ describe("worker request routing", () => {
   });
 
   it("protects and forwards diagnostic logs to the State DO", async () => {
-    const { env, agentRequests, stateRequests } = testEnvironment();
+    const { env, agentRequests, stateRequests, stateNames } = testEnvironment();
     const hidden = await handleRequest(
       new Request("https://worker.example/api/logs"),
       env,
@@ -159,6 +168,7 @@ describe("worker request routing", () => {
     expect(visible.status).toBe(200);
     expect(stateRequests).toHaveLength(1);
     expect(new URL(stateRequests[0]!.url).pathname).toBe("/logs");
+    expect(stateNames).toEqual([DIAGNOSTIC_STATE_INSTANCE]);
     expect(agentRequests).toHaveLength(0);
   });
 

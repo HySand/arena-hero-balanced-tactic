@@ -1,11 +1,10 @@
 import { handleRequest } from "./router";
+import { PRIMARY_STATE_INSTANCE } from "./instances";
 import type { Env } from "./supervisor";
 
 export { handleRequest } from "./router";
 export { ArenaHeroState } from "./state";
 export { ArenaHeroAgent } from "./supervisor";
-
-const INSTANCE_NAME = "arena-hero-primary";
 
 export default {
   fetch(
@@ -21,7 +20,7 @@ export default {
     env: Env,
     context: ExecutionContext,
   ): void {
-    const stub = env.AGENT.getByName(INSTANCE_NAME);
+    const stub = env.AGENT.getByName(PRIMARY_STATE_INSTANCE);
     context.waitUntil(
       stub
         .fetch("https://agent.internal/ensure", { method: "POST" })

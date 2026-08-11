@@ -2,6 +2,11 @@ import { DurableObject } from "cloudflare:workers";
 
 import type { StoredSubmission } from "./arena-command";
 import type { CommandPlan, ReceivedData, StrategyMemory } from "./contracts";
+import {
+  commandStateInstance,
+  DIAGNOSTIC_STATE_INSTANCE,
+  PRIMARY_STATE_INSTANCE,
+} from "./instances";
 import { decodeStrategyMemory, encodeStrategyMemory } from "./memory-storage";
 import { decodeGameMessage, serializePlan } from "./protocol";
 import type {
@@ -113,7 +118,7 @@ export class ArenaHeroAgent extends DurableObject<Env> {
     }
     if (this.phase === "open") {
       structuredLog("ws_stale", { lastMessageAt: this.lastMessageAt });
-      await this.recordDiagnostic("ws_stale", undefined, {
+      this.recordDiagnostic("ws_stale", undefined, {
         idleMs: Date.now() - this.lastMessageAt,
       });
       this.socket?.close(1012, "stale");
@@ -129,10 +134,8 @@ export class ArenaHeroAgent extends DurableObject<Env> {
 
   private async connectGame(): Promise<void> {
     this.phase = "connecting";
-    await Promise.all([
-      this.updateConnectionStatus({}),
-      this.recordDiagnostic("connect_started"),
-    ]);
+    this.recordDiagnostic("connect_started");
+    await this.updateConnectionStatus({});
     let response: Response;
     try {
       response = await fetchWithTimeout(
@@ -148,12 +151,10 @@ export class ArenaHeroAgent extends DurableObject<Env> {
     } catch (error) {
       const reason = errorName(error);
       structuredLog("ws_connect_failed", { reason });
-      await Promise.all([
-        this.updateConnectionStatus({
-          lastError: `ws_connect_failed:${reason}`,
-        }),
-        this.recordDiagnostic("ws_connect_failed", undefined, { reason }),
-      ]);
+      this.recordDiagnostic("ws_connect_failed", undefined, { reason });
+      await this.updateConnectionStatus({
+        lastError: `ws_connect_failed:${reason}`,
+      });
       await this.scheduleReconnect();
       return;
     }
@@ -190,13 +191,11 @@ export class ArenaHeroAgent extends DurableObject<Env> {
         .catch((error: unknown) => {
           const reason = errorName(error);
           structuredLog("message_failed", { reason });
+          this.recordDiagnostic("message_failed", undefined, { reason });
           this.ctx.waitUntil(
-            Promise.all([
-              this.updateConnectionStatus({
-                lastError: `message_failed:${reason}`,
-              }),
-              this.recordDiagnostic("message_failed", undefined, { reason }),
-            ]).then(() => undefined),
+            this.updateConnectionStatus({
+              lastError: `message_failed:${reason}`,
+            }),
           );
         });
     });
@@ -218,13 +217,13 @@ export class ArenaHeroAgent extends DurableObject<Env> {
         nextReconnectAt: null,
       }),
     ]);
-    await this.recordDiagnostic("ws_connected");
+    this.recordDiagnostic("ws_connected");
     structuredLog("ws_connected");
   }
 
   private async handleMessage(socket: WebSocket, raw: string): Promise<void> {
     if (this.socket !== socket) return;
-    await this.recordDiagnostic("ws_text_received", undefined, {
+    this.recordDiagnostic("ws_text_received", undefined, {
       bytes: new TextEncoder().encode(raw).byteLength,
       envelope: messageEnvelopeHint(raw),
     });
@@ -236,11 +235,11 @@ export class ArenaHeroAgent extends DurableObject<Env> {
     switch (message.type) {
       case "tick":
         this.announcedTick = message.data;
-        await this.recordDiagnostic("tick_received", message.data);
+        this.recordDiagnostic("tick_received", message.data);
         return;
       case "received":
         this.receipts[message.data.source] = message.data;
-        await this.recordDiagnostic("plan_received", message.data.tick, {
+        this.recordDiagnostic("plan_received", message.data.tick, {
           source: message.data.source,
         });
         structuredLog("plan_received", {
@@ -261,7 +260,7 @@ export class ArenaHeroAgent extends DurableObject<Env> {
     tick: number,
     state: Parameters<typeof planTick>[1],
   ): Promise<void> {
-    await this.recordDiagnostic("state_received", tick, {
+    this.recordDiagnostic("state_received", tick, {
       population: state.population,
       objects: state.objects.length,
       events: state.events.length,
@@ -281,7 +280,7 @@ export class ArenaHeroAgent extends DurableObject<Env> {
     let plan: CommandPlan;
     let nextMemory = memory;
     let summary: ReturnType<typeof planTick>["summary"] | undefined;
-    await this.recordDiagnostic("planner_started", tick, {
+    this.recordDiagnostic("planner_started", tick, {
       obstacles: Object.keys(memory.obstacles).length,
       explored: Object.keys(memory.explored).length,
       resources: Object.keys(memory.resources).length,
@@ -289,7 +288,7 @@ export class ArenaHeroAgent extends DurableObject<Env> {
     });
     try {
       const result = planTick(tick, state, memory, config);
-      await this.recordDiagnostic("planner_completed", tick, {
+      this.recordDiagnostic("planner_completed", tick, {
         actions: Object.keys(result.plan.unit_actions ?? {}).length,
       });
       plan = validatePlan(result.plan, state)
@@ -299,7 +298,7 @@ export class ArenaHeroAgent extends DurableObject<Env> {
       summary = result.summary;
     } catch (error) {
       const reason = errorName(error);
-      await this.recordDiagnostic("planner_failed", tick, { reason });
+      this.recordDiagnostic("planner_failed", tick, { reason });
       structuredLog("planner_failed", { tick, reason });
       plan = safeFallbackPlan(tick, state);
     }
@@ -309,7 +308,7 @@ export class ArenaHeroAgent extends DurableObject<Env> {
       body: serializePlan(plan),
     };
     await this.forwardSubmission(submission);
-    await this.recordDiagnostic("command_submit_forwarded", tick);
+    this.recordDiagnostic("command_submit_forwarded", tick);
 
     const status = {
       tick,
@@ -327,7 +326,7 @@ export class ArenaHeroAgent extends DurableObject<Env> {
     if (!statusResponse.ok) {
       throw new Error(`State status update failed: ${statusResponse.status}`);
     }
-    await this.recordDiagnostic("status_saved", tick);
+    this.recordDiagnostic("status_saved", tick);
     structuredLog("plan_computed", {
       tick,
       posture: summary?.posture,
@@ -346,7 +345,7 @@ export class ArenaHeroAgent extends DurableObject<Env> {
       strategyMemoryGzip: compressedMemory,
       lastSubmission: submission,
     });
-    await this.recordDiagnostic("memory_checkpoint_saved", tick, {
+    this.recordDiagnostic("memory_checkpoint_saved", tick, {
       bytes: compressedMemory.byteLength,
       durationMs: Date.now() - checkpointStartedAt,
     });
@@ -402,22 +401,41 @@ export class ArenaHeroAgent extends DurableObject<Env> {
     });
   }
 
-  private async recordDiagnostic(
+  private recordDiagnostic(
     event: string,
     tick?: number,
     details?: Record<string, string | number | boolean | null>,
-  ): Promise<void> {
+  ): void {
     const record: DiagnosticRecord = {
       at: new Date().toISOString(),
       event,
       ...(tick === undefined ? {} : { tick }),
       ...(details === undefined ? {} : { details }),
     };
-    await this.state().fetch("https://state.internal/diagnostic", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(record),
-    });
+    this.ctx.waitUntil(
+      this.diagnostics()
+        .fetch("https://state.internal/diagnostic", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(record),
+        })
+        .then((response) => {
+          if (!response.ok) {
+            structuredLog("diagnostic_write_rejected", {
+              status: response.status,
+              event,
+              tick,
+            });
+          }
+        })
+        .catch((error: unknown) => {
+          structuredLog("diagnostic_write_failed", {
+            reason: errorName(error),
+            event,
+            tick,
+          });
+        }),
+    );
   }
 
   private async updateConnectionStatus(
@@ -437,7 +455,7 @@ export class ArenaHeroAgent extends DurableObject<Env> {
 
   private async forwardSubmission(submission: StoredSubmission): Promise<void> {
     const response = await this.env.STATE.getByName(
-      `command-${submission.key}`,
+      commandStateInstance(submission.key),
     ).fetch("https://state.internal/submit", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -449,7 +467,11 @@ export class ArenaHeroAgent extends DurableObject<Env> {
   }
 
   private state(): DurableObjectStub<ArenaHeroState> {
-    return this.env.STATE.getByName("arena-hero-primary");
+    return this.env.STATE.getByName(PRIMARY_STATE_INSTANCE);
+  }
+
+  private diagnostics(): DurableObjectStub<ArenaHeroState> {
+    return this.env.STATE.getByName(DIAGNOSTIC_STATE_INSTANCE);
   }
 }
 
