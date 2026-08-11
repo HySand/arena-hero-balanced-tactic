@@ -46,6 +46,12 @@ export async function handleRequest(
   if (url.pathname === "/api/status" && request.method === "GET") {
     return agent(env).fetch("https://agent.internal/status");
   }
+  if (url.pathname === "/api/logs" && request.method === "GET") {
+    if (!authorizedRequest(request, env.ADMIN_CONTROL_SECRET)) {
+      return new Response(null, { status: 404 });
+    }
+    return agent(env).fetch("https://agent.internal/logs");
+  }
   if (
     (url.pathname === "/api/control" || url.pathname === "/control") &&
     request.method === "POST"

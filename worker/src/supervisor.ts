@@ -57,6 +57,18 @@ interface StoredConnectionStatus {
   nextReconnectAt?: string | null;
 }
 
+interface DiagnosticRecord {
+  at: string;
+  event: string;
+  tick?: number;
+  details?: Record<string, string | number | boolean | null>;
+}
+
+interface DiagnosticSnapshot {
+  current?: DiagnosticRecord;
+  recent: DiagnosticRecord[];
+}
+
 function structuredLog(
   event: string,
   fields: Record<string, unknown> = {},
@@ -116,6 +128,9 @@ export class ArenaHeroAgent extends DurableObject<Env> {
     }
     if (path === "/status" && request.method === "GET") {
       return this.statusResponse();
+    }
+    if (path === "/logs" && request.method === "GET") {
+      return jsonResponse(await this.diagnosticSnapshot());
     }
     if (request.method === "POST" && path === "/ensure") {
       await this.ensureRunning();
@@ -201,6 +216,7 @@ export class ArenaHeroAgent extends DurableObject<Env> {
 
   private async connectGame(): Promise<void> {
     this.phase = "connecting";
+    await this.recordDiagnostic("connect_started");
     let response: Response;
     try {
       response = await fetch(GAME_WS_URL, {
@@ -274,6 +290,7 @@ export class ArenaHeroAgent extends DurableObject<Env> {
         nextReconnectAt: null,
       }),
     ]);
+    await this.recordDiagnostic("ws_connected");
     structuredLog("ws_connected");
   }
 
@@ -287,6 +304,7 @@ export class ArenaHeroAgent extends DurableObject<Env> {
     switch (message.type) {
       case "tick":
         this.announcedTick = message.data;
+        await this.recordDiagnostic("tick_received", message.data);
         return;
       case "received":
         this.receipts[message.data.source] = message.data;
@@ -308,6 +326,11 @@ export class ArenaHeroAgent extends DurableObject<Env> {
     tick: number,
     state: Parameters<typeof planTick>[1],
   ): Promise<void> {
+    await this.recordDiagnostic("state_received", tick, {
+      population: state.population,
+      objects: state.objects.length,
+      events: state.events.length,
+    });
     const existing =
       await this.ctx.storage.get<StoredSubmission>("lastSubmission");
     if (existing?.tick === tick) {
@@ -323,17 +346,29 @@ export class ArenaHeroAgent extends DurableObject<Env> {
     let plan: CommandPlan;
     let nextMemory = memory;
     let summary: ReturnType<typeof planTick>["summary"] | undefined;
+    await this.recordDiagnostic("planner_started", tick, {
+      obstacles: Object.keys(memory.obstacles).length,
+      explored: Object.keys(memory.explored).length,
+      resources: Object.keys(memory.resources).length,
+      enemies: Object.keys(memory.enemies).length,
+    });
     try {
       const result = planTick(tick, state, memory, config);
+      await this.recordDiagnostic("planner_completed", tick, {
+        actions: Object.keys(result.plan.unit_actions ?? {}).length,
+      });
       plan = validatePlan(result.plan, state)
         ? result.plan
         : safeFallbackPlan(tick, state);
       nextMemory = result.memory;
       summary = result.summary;
     } catch (error) {
-      structuredLog("planner_failed", { tick, reason: errorName(error) });
+      const reason = errorName(error);
+      await this.recordDiagnostic("planner_failed", tick, { reason });
+      structuredLog("planner_failed", { tick, reason });
       plan = safeFallbackPlan(tick, state);
     }
+    await this.recordDiagnostic("status_save_started", tick);
     await this.ctx.storage.put({
       strategyMemory: nextMemory,
       lastStatus: {
@@ -342,6 +377,7 @@ export class ArenaHeroAgent extends DurableObject<Env> {
         ...(summary ? { summary } : {}),
       } satisfies StoredStatus,
     });
+    await this.recordDiagnostic("status_saved", tick);
     structuredLog("plan_computed", {
       tick,
       posture: summary?.posture,
@@ -358,6 +394,7 @@ export class ArenaHeroAgent extends DurableObject<Env> {
       body: serializePlan(plan),
     };
     await this.ctx.storage.put("lastSubmission", submission);
+    await this.recordDiagnostic("command_submit_started", tick);
     await this.submitSerialized(submission);
   }
 
@@ -388,6 +425,9 @@ export class ArenaHeroAgent extends DurableObject<Env> {
       const errorCode =
         typeof payload?.error === "string" ? payload.error : undefined;
       if (response.status === 202) {
+        await this.recordDiagnostic("command_accepted", submission.tick, {
+          attempt,
+        });
         structuredLog("plan_accepted", { tick: submission.tick, attempt });
         return;
       }
@@ -462,6 +502,37 @@ export class ArenaHeroAgent extends DurableObject<Env> {
     if (!retryInline) return;
     await delay(waitMs);
     if (this.phase === "idle") await this.ensureRunning();
+  }
+
+  private async diagnosticSnapshot(): Promise<DiagnosticSnapshot> {
+    const [current, recent] = await Promise.all([
+      this.ctx.storage.get<DiagnosticRecord>("diagnosticCurrent"),
+      this.ctx.storage.get<DiagnosticRecord[]>("diagnosticRecent"),
+    ]);
+    return {
+      ...(current === undefined ? {} : { current }),
+      recent: recent ?? [],
+    };
+  }
+
+  private async recordDiagnostic(
+    event: string,
+    tick?: number,
+    details?: Record<string, string | number | boolean | null>,
+  ): Promise<void> {
+    const record: DiagnosticRecord = {
+      at: new Date().toISOString(),
+      event,
+      ...(tick === undefined ? {} : { tick }),
+      ...(details === undefined ? {} : { details }),
+    };
+    const recent =
+      (await this.ctx.storage.get<DiagnosticRecord[]>("diagnosticRecent")) ??
+      [];
+    await this.ctx.storage.put({
+      diagnosticCurrent: record,
+      diagnosticRecent: [...recent, record].slice(-40),
+    });
   }
 
   private async updateConnectionStatus(

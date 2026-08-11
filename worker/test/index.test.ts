@@ -125,6 +125,25 @@ describe("worker request routing", () => {
     expect(agentRequests).toHaveLength(0);
   });
 
+  it("protects and forwards diagnostic logs", async () => {
+    const { env, agentRequests } = testEnvironment();
+    const hidden = await handleRequest(
+      new Request("https://worker.example/api/logs"),
+      env,
+    );
+    const visible = await handleRequest(
+      new Request("https://worker.example/api/logs", {
+        headers: { Authorization: "Bearer secret-value" },
+      }),
+      env,
+    );
+
+    expect(hidden.status).toBe(404);
+    expect(visible.status).toBe(200);
+    expect(agentRequests).toHaveLength(1);
+    expect(new URL(agentRequests[0]!.url).pathname).toBe("/logs");
+  });
+
   it("forwards authorized configuration writes", async () => {
     const { env, agentRequests } = testEnvironment();
     const body = JSON.stringify(DEFAULT_CONFIG);
