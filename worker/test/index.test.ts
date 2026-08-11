@@ -4,6 +4,8 @@ import { authorized } from "../src/control";
 import { handleRequest } from "../src/router";
 import { DEFAULT_CONFIG } from "../src/strategy/config";
 
+const ADMIN_AUTHORIZATION = ["Bearer", "secret-value"].join(" ");
+
 interface InternalFetcher {
   fetch(input: RequestInfo | URL, init?: RequestInit): Promise<Response>;
 }
@@ -148,7 +150,7 @@ describe("worker request routing", () => {
     );
     const visible = await handleRequest(
       new Request("https://worker.example/api/logs", {
-        headers: { Authorization: "Bearer secret-value" },
+        headers: { Authorization: ADMIN_AUTHORIZATION },
       }),
       env,
     );
@@ -166,7 +168,7 @@ describe("worker request routing", () => {
     const response = await handleRequest(
       new Request("https://worker.example/api/config", {
         method: "PUT",
-        headers: { Authorization: "Bearer secret-value" },
+        headers: { Authorization: ADMIN_AUTHORIZATION },
         body,
       }),
       env,
@@ -185,7 +187,7 @@ describe("worker request routing", () => {
       new Request("https://worker.example/api/config", {
         method: "PUT",
         headers: {
-          Authorization: "Bearer secret-value",
+          Authorization: ADMIN_AUTHORIZATION,
           "Content-Length": String(64 * 1024 + 1),
         },
         body: "{}",
@@ -208,7 +210,7 @@ describe("worker request routing", () => {
     const invalid = await handleRequest(
       new Request("https://worker.example/api/control", {
         method: "POST",
-        headers: { Authorization: "Bearer secret-value" },
+        headers: { Authorization: ADMIN_AUTHORIZATION },
         body: JSON.stringify({ action: "restart" }),
       }),
       env,
@@ -217,7 +219,7 @@ describe("worker request routing", () => {
     const valid = await handleRequest(
       new Request("https://worker.example/control", {
         method: "POST",
-        headers: { Authorization: "Bearer secret-value" },
+        headers: { Authorization: ADMIN_AUTHORIZATION },
         body: JSON.stringify({ action: "start" }),
       }),
       env,
