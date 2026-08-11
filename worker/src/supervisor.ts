@@ -97,7 +97,8 @@ export class ArenaHeroAgent extends DurableObject<Env> {
   private strategyConfig: StrategyConfig | undefined;
   private receipts: Partial<Record<"AGENT" | "MANUAL", ReceivedData>> = {};
   private messageChain: Promise<void> = Promise.resolve();
-  private submissionTasks = new Set<Promise<void>>();
+  private submissionActive = false;
+  private pendingSubmission: StoredSubmission | undefined;
 
   override async fetch(request: Request): Promise<Response> {
     const path = new URL(request.url).pathname;
@@ -411,8 +412,23 @@ export class ArenaHeroAgent extends DurableObject<Env> {
   }
 
   private queueSubmission(submission: StoredSubmission): void {
-    const task = this.submitSerialized(submission)
-      .catch(async (error: unknown) => {
+    this.pendingSubmission = submission;
+    if (this.submissionActive) return;
+    this.submissionActive = true;
+    const task = this.drainSubmissions().finally(() => {
+      this.submissionActive = false;
+      if (this.pendingSubmission) this.queueSubmission(this.pendingSubmission);
+    });
+    this.ctx.waitUntil(task);
+  }
+
+  private async drainSubmissions(): Promise<void> {
+    while (this.pendingSubmission) {
+      const submission = this.pendingSubmission;
+      this.pendingSubmission = undefined;
+      try {
+        await this.submitSerialized(submission);
+      } catch (error) {
         const reason = errorName(error);
         await this.recordDiagnostic("command_task_failed", submission.tick, {
           reason,
@@ -421,12 +437,8 @@ export class ArenaHeroAgent extends DurableObject<Env> {
           tick: submission.tick,
           reason,
         });
-      })
-      .finally(() => {
-        this.submissionTasks.delete(task);
-      });
-    this.submissionTasks.add(task);
-    this.ctx.waitUntil(task);
+      }
+    }
   }
 
   private async submitSerialized(submission: StoredSubmission): Promise<void> {
@@ -469,7 +481,7 @@ export class ArenaHeroAgent extends DurableObject<Env> {
       }
 
       if (response.status === 202) {
-        await response.body?.cancel();
+        void response.body?.cancel().catch(() => undefined);
         await this.recordDiagnostic("command_accepted", submission.tick, {
           attempt,
         });
