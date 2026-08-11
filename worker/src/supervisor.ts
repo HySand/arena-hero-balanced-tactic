@@ -2,18 +2,10 @@ import { DurableObject } from "cloudflare:workers";
 
 import type { StoredSubmission } from "./arena-command";
 import type { CommandPlan, ReceivedData, StrategyMemory } from "./contracts";
-import {
-  commandStateInstance,
-  DIAGNOSTIC_STATE_INSTANCE,
-  PRIMARY_STATE_INSTANCE,
-} from "./instances";
+import { commandStateInstance, PRIMARY_STATE_INSTANCE } from "./instances";
 import { decodeStrategyMemory, encodeStrategyMemory } from "./memory-storage";
 import { decodeGameMessage, serializePlan } from "./protocol";
-import type {
-  AgentRuntimeSnapshot,
-  ArenaHeroState,
-  DiagnosticRecord,
-} from "./state";
+import type { AgentRuntimeSnapshot, ArenaHeroState } from "./state";
 import { emptyMemory, planTick, safeFallbackPlan } from "./strategy/planner";
 import { validatePlan } from "./strategy/validation";
 
@@ -269,7 +261,7 @@ export class ArenaHeroAgent extends DurableObject<Env> {
       await this.ctx.storage.get<StoredSubmission>("lastSubmission");
     if (existing?.tick === tick) {
       structuredLog("plan_replay", { tick });
-      await this.forwardSubmission(existing);
+      this.dispatchSubmission(existing);
       return;
     }
     const [memory, runtime] = await Promise.all([
@@ -307,8 +299,8 @@ export class ArenaHeroAgent extends DurableObject<Env> {
       key: `agent-${plan.tick}-primary`,
       body: serializePlan(plan),
     };
-    await this.forwardSubmission(submission);
-    this.recordDiagnostic("command_submit_forwarded", tick);
+    this.dispatchSubmission(submission);
+    this.recordDiagnostic("command_submit_dispatched", tick);
 
     const status = {
       tick,
@@ -406,33 +398,27 @@ export class ArenaHeroAgent extends DurableObject<Env> {
     tick?: number,
     details?: Record<string, string | number | boolean | null>,
   ): void {
-    const record: DiagnosticRecord = {
-      at: new Date().toISOString(),
-      event,
+    structuredLog(event, {
       ...(tick === undefined ? {} : { tick }),
       ...(details === undefined ? {} : { details }),
-    };
+    });
+  }
+
+  private dispatchSubmission(submission: StoredSubmission): void {
+    const startedAt = Date.now();
     this.ctx.waitUntil(
-      this.diagnostics()
-        .fetch("https://state.internal/diagnostic", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify(record),
-        })
-        .then((response) => {
-          if (!response.ok) {
-            structuredLog("diagnostic_write_rejected", {
-              status: response.status,
-              event,
-              tick,
-            });
-          }
+      this.forwardSubmission(submission)
+        .then(() => {
+          structuredLog("command_submit_forwarded", {
+            tick: submission.tick,
+            durationMs: Date.now() - startedAt,
+          });
         })
         .catch((error: unknown) => {
-          structuredLog("diagnostic_write_failed", {
+          structuredLog("command_forward_failed", {
             reason: errorName(error),
-            event,
-            tick,
+            tick: submission.tick,
+            durationMs: Date.now() - startedAt,
           });
         }),
     );
@@ -468,10 +454,6 @@ export class ArenaHeroAgent extends DurableObject<Env> {
 
   private state(): DurableObjectStub<ArenaHeroState> {
     return this.env.STATE.getByName(PRIMARY_STATE_INSTANCE);
-  }
-
-  private diagnostics(): DurableObjectStub<ArenaHeroState> {
-    return this.env.STATE.getByName(DIAGNOSTIC_STATE_INSTANCE);
   }
 }
 
