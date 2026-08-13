@@ -7,7 +7,7 @@
   "workers_dev": true,
   "keep_vars": true,
   "assets": {
-    "directory": "./public",
+    "directory": "../dashboard",
     "binding": "ASSETS",
     "html_handling": "auto-trailing-slash",
     "not_found_handling": "404-page",

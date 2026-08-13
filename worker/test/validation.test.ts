@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { validatePlan } from "../src/strategy/validation";
+import { validatePlan } from "../src/plan-validation";
 import { core, IDS, state, unit } from "./fixtures";
 
 describe("local command validation", () => {

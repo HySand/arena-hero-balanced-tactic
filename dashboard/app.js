@@ -226,12 +226,31 @@ const PACING_PRESETS = {
 
 const $ = (id) => document.getElementById(id);
 const deepClone = (value) => JSON.parse(JSON.stringify(value));
+const ADMIN_TOKEN_KEY = "arena-hero-admin-token";
+
+function administratorAuthorization() {
+  let token = sessionStorage.getItem(ADMIN_TOKEN_KEY)?.trim();
+  if (!token) {
+    token = window.prompt("请输入 ADMIN_CONTROL_SECRET")?.trim();
+    if (!token) throw new Error("已取消管理员操作");
+    sessionStorage.setItem(ADMIN_TOKEN_KEY, token);
+  }
+  return `Bearer ${token}`;
+}
 
 async function requestJSON(url, options = {}) {
+  const { administrator = false, ...requestOptions } = options;
+  const headers = {
+    "Content-Type": "application/json",
+    ...(requestOptions.headers || {}),
+    ...(administrator
+      ? { Authorization: administratorAuthorization() }
+      : {}),
+  };
   const response = await fetch(url, {
     cache: "no-store",
-    headers: { "Content-Type": "application/json", ...(options.headers || {}) },
-    ...options,
+    ...requestOptions,
+    headers,
   });
   let document;
   try {
@@ -239,7 +258,13 @@ async function requestJSON(url, options = {}) {
   } catch {
     document = { error: `HTTP ${response.status}` };
   }
-  if (!response.ok) throw new Error(document.error || `HTTP ${response.status}`);
+  if (!response.ok) {
+    if (administrator && response.status === 404) {
+      sessionStorage.removeItem(ADMIN_TOKEN_KEY);
+      throw new Error("管理员密钥无效");
+    }
+    throw new Error(document.error || `HTTP ${response.status}`);
+  }
   return document;
 }
 
@@ -821,6 +846,7 @@ async function saveConfig() {
   try {
     const result = await requestJSON("/api/config", {
       method: "PUT",
+      administrator: true,
       body: JSON.stringify(state.config),
     });
     state.config = result.config;
@@ -1056,6 +1082,7 @@ async function sendControlCommand() {
   try {
     const result = await requestJSON("/api/control", {
       method: "POST",
+      administrator: true,
       body: JSON.stringify(command),
     });
     showToast(result.message || "指令已排队");
@@ -1069,7 +1096,10 @@ async function sendControlCommand() {
 
 async function clearControlQueue() {
   try {
-    const result = await requestJSON("/api/control", { method: "DELETE" });
+    const result = await requestJSON("/api/control", {
+      method: "DELETE",
+      administrator: true,
+    });
     showToast(result.removed ? `已撤销 ${result.removed} 条待执行指令` : "没有待执行指令");
     await refreshControlStatus();
   } catch (error) {

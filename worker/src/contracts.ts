@@ -103,113 +103,6 @@ export type GameMessage =
   | { type: "state"; data: PlayerState }
   | { type: "received"; data: ReceivedData };
 
-export interface ResourceObservation {
-  position: Position;
-  lastSeenTick: number;
-  depletedAtTick?: number;
-  contestedAtTick?: number;
-}
-
-export interface EnemyObservation {
-  id: string;
-  kind: "CORE" | "UNIT";
-  unitType?: UnitType;
-  position: Position;
-  hp: number;
-  lastSeenTick: number;
-  lastMove?: Direction;
-  movementStreak?: number;
-}
-
-export type RoleKind =
-  | "RESERVE"
-  | "CONTROL_RALLY"
-  | "PATROL"
-  | "OBSERVE"
-  | "WATCH_POINT"
-  | "HOLD_POINT"
-  | "ESCORT"
-  | "CORE_DEFENSE"
-  | "RALLY"
-  | "ADVANCE"
-  | "ENGAGE"
-  | "WITHDRAW";
-
-export interface RoleMemory {
-  kind: RoleKind;
-  anchor: Position;
-  sinceTick: number;
-}
-
-export interface StrategyMemory {
-  obstacles: Record<string, Position>;
-  explored: Record<string, Position>;
-  workerExplored: Record<string, Position>;
-  resources: Record<string, ResourceObservation>;
-  enemies: Record<string, EnemyObservation>;
-  patrolVisits: Record<string, number>;
-  roles: Record<string, RoleMemory>;
-  posture: Posture;
-  postureSinceTick: number;
-  previousPopulation: number;
-  recentHarvestFailures: number;
-  nearbyResourceDryTicks: number;
-  safeExpansionTicks: number;
-  previousCombatUnitIds: string[];
-  recentCombatLosses: number;
-  militaryPressureTicks: number;
-  militaryCalmTicks: number;
-  /** Sticky per-worker duty-scout deadlines (absolute tick). */
-  workerDutyScoutUntil: Record<string, number>;
-  /** Last worker move, used to break FOW / corridor reverse oscillation. */
-  workerLastMove?: Record<
-    string,
-    { direction: Direction; from: Position; tick: number }
-  >;
-  /** Sticky visible/fog harvest goal while the worker is en route. */
-  workerHarvestGoal?: Record<string, Position>;
-  /** Cells already tried while approaching the current harvest goal. */
-  workerHarvestVisited?: Record<string, { goal: string; cells: string[] }>;
-  /** Committed step queue toward a visible/fog harvest goal. */
-  workerHarvestPath?: Record<
-    string,
-    { goal: string; steps: Direction[]; expect: Position }
-  >;
-  /**
-   * Sticky exploration/scout cell so frontier re-ranking cannot flip the
-   * worker between two vision-rim targets every tick (UP/DOWN orbit).
-   */
-  workerScoutTarget?: Record<
-    string,
-    { position: Position; tick: number; goalKey?: string }
-  >;
-}
-
-export interface DecisionSummary {
-  posture: Posture;
-  threatened: boolean;
-  retreating: boolean;
-  controlRadius: number;
-  supportResponseTicks: number;
-  reserveCount: number;
-  reserve: number;
-  militaryReady: boolean;
-  minimumCombatCount: number;
-  minimumCombatPower: number;
-  combatCountDeficit: number;
-  combatPowerDeficit: number;
-  targetWorkerShare: number;
-  recentCombatLosses: number;
-  militaryPressureTicks: number;
-  actions: Record<string, number>;
-  planningMs: number;
-}
-
-export type StrategyBackend =
-  | "typescript_primary"
-  | "python_shadow"
-  | "python_primary";
-
 export type StrategyStatusPosture =
   | Posture
   | "GUARDED"
@@ -224,26 +117,9 @@ export interface StrategyStatusSummary {
   planningMs: number;
 }
 
-export interface StrategyShadowStatus {
-  matched: boolean;
-  unitActionDifferences: number;
-  coreActionDifferent: boolean;
-  summaryDifferent: boolean;
-  memoryMetadataDifferent: boolean;
-  comparedTicks?: number;
-  matchedTicks?: number;
-  mismatchedTicks?: number;
-  cumulativeUnitActionDifferences?: number;
-  cumulativeCoreActionDifferences?: number;
-  cumulativeSummaryDifferences?: number;
-  cumulativeMemoryMetadataDifferences?: number;
-  lastComparedTick?: number;
-  lastDifferenceTick?: number;
-}
-
 export interface StrategyRuntimeStatus {
-  backend: StrategyBackend;
-  submittedBackend: "typescript" | "python" | "safe_fallback";
+  backend: "python_primary";
+  submittedBackend: "python" | "safe_fallback";
   strategyVersion: string;
   contractVersion: string;
   latencyMs?: number;
@@ -252,11 +128,4 @@ export interface StrategyRuntimeStatus {
   fallbackUsed: boolean;
   consecutiveFailures: number;
   blocked: boolean;
-  shadow?: StrategyShadowStatus;
-}
-
-export interface PlanResult {
-  plan: CommandPlan;
-  memory: StrategyMemory;
-  summary: DecisionSummary;
 }
