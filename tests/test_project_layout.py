@@ -35,6 +35,17 @@ class ProjectLayoutTests(unittest.TestCase):
         root_legacy = importlib.import_module("balanced_tactic")
         self.assertIs(root_legacy, canonical)
 
+    def test_python_worker_uses_runtime_sdk_compatibility_mode(self) -> None:
+        worker_config = json.loads(
+            (PROJECT_ROOT / "python-worker" / "wrangler.jsonc").read_text(
+                encoding="utf-8"
+            )
+        )
+        self.assertEqual(
+            worker_config["compatibility_flags"],
+            ["python_workers", "disable_python_external_sdk"],
+        )
+
 
 if __name__ == "__main__":
     unittest.main()
