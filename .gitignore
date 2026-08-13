@@ -88,3 +88,6 @@ worker/coverage/
 .dev.vars*
 worker/.dev.vars*
 !worker/.dev.vars.example
+python-worker/.venv-workers/
+python-worker/src/arena_hero_tactic/
+python-worker/python_modules/

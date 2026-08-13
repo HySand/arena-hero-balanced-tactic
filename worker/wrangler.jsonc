@@ -26,6 +26,11 @@
         "name": "STATE",
         "class_name": "ArenaHeroState",
       },
+      {
+        "name": "PYTHON_STRATEGY",
+        "class_name": "StrategyPlanner",
+        "script_name": "arena-hero-python-strategy",
+      },
     ],
   },
   "migrations": [

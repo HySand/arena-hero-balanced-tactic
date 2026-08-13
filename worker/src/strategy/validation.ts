@@ -12,6 +12,7 @@ function validUnitAction(unit: UnitObject, action: UnitAction): boolean {
   switch (action.type) {
     case "WAIT":
     case "MOVE":
+    case "HEAL":
     case "PICKUP_BEACON":
     case "DROP_BEACON":
     case "SELF_DESTRUCT":
@@ -22,7 +23,10 @@ function validUnitAction(unit: UnitObject, action: UnitAction): boolean {
     case "SWEEP":
       return unit.unit_type === "VANGUARD";
     case "SHOOT":
-      return unit.unit_type === "RANGER" && UUID.test(action.target_id);
+      return (
+        unit.unit_type === "RANGER" &&
+        (action.target_id === undefined || UUID.test(action.target_id))
+      );
   }
 }
 

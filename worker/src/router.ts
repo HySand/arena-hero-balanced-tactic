@@ -1,4 +1,8 @@
-import { authorized, isControlAction } from "./control";
+import {
+  authorized,
+  isControlAction,
+  isStrategyBackendUpdate,
+} from "./control";
 import { DIAGNOSTIC_STATE_INSTANCE, PRIMARY_STATE_INSTANCE } from "./instances";
 import { CONFIG_SCHEMA } from "./strategy/config";
 
@@ -53,6 +57,38 @@ export async function handleRequest(
   }
   if (url.pathname === "/api/status" && request.method === "GET") {
     return state(env).fetch("https://state.internal/status");
+  }
+  if (url.pathname === "/api/backend" && request.method === "GET") {
+    return state(env).fetch("https://state.internal/backend");
+  }
+  if (url.pathname === "/api/backend" && request.method === "PUT") {
+    if (!authorizedRequest(request, env.ADMIN_CONTROL_SECRET)) {
+      return new Response(null, { status: 404 });
+    }
+    const body = await readRequestBody(request);
+    if (body instanceof Response) return body;
+    let update: unknown;
+    try {
+      update = JSON.parse(body);
+    } catch {
+      return Response.json({ error: "INVALID_BACKEND" }, { status: 400 });
+    }
+    if (!isStrategyBackendUpdate(update)) {
+      return Response.json({ error: "INVALID_BACKEND" }, { status: 400 });
+    }
+    const response = await state(env).fetch("https://state.internal/backend", {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body,
+    });
+    if (response.ok && context) {
+      context.waitUntil(
+        agent(env)
+          .fetch("https://agent.internal/ensure", { method: "POST" })
+          .then(() => undefined),
+      );
+    }
+    return response;
   }
   if (url.pathname === "/api/logs" && request.method === "GET") {
     if (!authorizedRequest(request, env.ADMIN_CONTROL_SECRET)) {

@@ -13,6 +13,19 @@ const POSTURE_LABELS = {
   CONTEST: "争夺",
   ATTACK: "进攻",
   REGROUP: "重整",
+  GUARDED: "戒备",
+  SURVIVAL: "生存",
+  RESPAWNING: "重生中",
+};
+const BACKEND_LABELS = {
+  typescript_primary: "TypeScript 主路径",
+  python_shadow: "Python Shadow",
+  python_primary: "Python 主路径",
+};
+const SUBMITTED_BACKEND_LABELS = {
+  typescript: "TypeScript",
+  python: "Python",
+  safe_fallback: "最小安全计划",
 };
 const TASK_LABELS = {
   economy: "经济",
@@ -189,13 +202,61 @@ async function control(action) {
   }
 }
 
+async function saveBackend() {
+  try {
+    const backend = $("strategyBackend").value;
+    const failureThreshold = Number($("failureThreshold").value);
+    const result = await requestJSON("/api/backend", {
+      method: "PUT",
+      headers: tokenHeaders(),
+      body: JSON.stringify({ backend, failureThreshold }),
+    });
+    showToast(
+      `策略后端已切换为 ${BACKEND_LABELS[result.backend] || result.backend}`,
+    );
+    await refreshStatus();
+  } catch (error) {
+    showToast(adminErrorMessage(error), true);
+  }
+}
+
+function renderShadow(shadow) {
+  if (!shadow) return "—";
+  const result = shadow.matched ? "一致" : "有差异";
+  const compared = shadow.comparedTicks ?? 1;
+  const mismatched = shadow.mismatchedTicks ?? (shadow.matched ? 0 : 1);
+  return `${result} · ${mismatched}/${compared} Tick · 单位 ${shadow.unitActionDifferences} · Core ${shadow.coreActionDifferent ? 1 : 0} · 摘要 ${shadow.summaryDifferent ? 1 : 0} · 记忆 ${shadow.memoryMetadataDifferent ? 1 : 0}`;
+}
+
 async function refreshStatus() {
   try {
     const status = await requestJSON("/api/status");
     $("desiredState").textContent = status.desired || "—";
     $("phaseState").textContent = status.phase || "—";
     $("tickState").textContent = status.tick ?? "—";
-    $("postureState").textContent = status.summary?.posture || "—";
+    $("postureState").textContent =
+      POSTURE_LABELS[status.summary?.posture] || status.summary?.posture || "—";
+    $("backendState").textContent =
+      BACKEND_LABELS[status.backend] || status.backend || "—";
+    $("strategyBackend").value = status.backend || "typescript_primary";
+    $("failureThreshold").value = status.strategyFailureThreshold ?? 3;
+    $("submittedBackendState").textContent =
+      SUBMITTED_BACKEND_LABELS[status.strategy?.submittedBackend] ||
+      status.strategy?.submittedBackend ||
+      "—";
+    $("strategyVersionState").textContent = status.strategy
+      ? `${status.strategy.strategyVersion} / ${status.strategy.contractVersion}`
+      : "—";
+    $("latencyState").textContent =
+      status.strategy?.latencyMs === undefined
+        ? "—"
+        : `${Math.round(status.strategy.latencyMs)} ms`;
+    $("lastSuccessTick").textContent = status.strategy?.lastSuccessTick ?? "—";
+    $("failureState").textContent = status.strategy
+      ? `${status.strategy.consecutiveFailures}${status.strategy.blocked ? "（已阻塞）" : ""}`
+      : "—";
+    $("strategyError").textContent = status.strategy?.lastError || "—";
+    $("shadowState").textContent = renderShadow(status.strategy?.shadow);
     const badge = $("connectionBadge");
     badge.textContent = status.authBlocked
       ? "认证被阻止"
@@ -205,7 +266,10 @@ async function refreshStatus() {
           ? "已停止"
           : "等待连接";
     badge.classList.toggle("online", Boolean(status.connected));
-    badge.classList.toggle("blocked", Boolean(status.authBlocked));
+    badge.classList.toggle(
+      "blocked",
+      Boolean(status.authBlocked || status.strategy?.blocked),
+    );
   } catch {
     $("connectionBadge").textContent = "状态读取失败";
     $("connectionBadge").classList.add("blocked");
@@ -231,6 +295,7 @@ function bindEvents() {
   });
   $("startAgent").addEventListener("click", () => control("start"));
   $("stopAgent").addEventListener("click", () => control("stop"));
+  $("saveBackend").addEventListener("click", saveBackend);
 }
 
 async function main() {

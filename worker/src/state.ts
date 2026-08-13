@@ -1,7 +1,15 @@
 import { DurableObject } from "cloudflare:workers";
 
-import type { DecisionSummary } from "./contracts";
-import { isControlAction } from "./control";
+import type {
+  StrategyBackend,
+  StrategyRuntimeStatus,
+  StrategyStatusSummary,
+} from "./contracts";
+import {
+  isControlAction,
+  isStrategyBackend,
+  isStrategyBackendUpdate,
+} from "./control";
 import {
   DEFAULT_CONFIG,
   parseStrategyConfig,
@@ -10,11 +18,14 @@ import {
 
 type DesiredState = "running" | "stopped";
 type ConnectionPhase = "idle" | "connecting" | "open" | "blocked";
+export const DEFAULT_STRATEGY_BACKEND: StrategyBackend = "typescript_primary";
+export const DEFAULT_STRATEGY_FAILURE_THRESHOLD = 3;
 
 interface StoredStatus {
   tick: number;
   updatedAt: string;
-  summary?: DecisionSummary;
+  summary?: StrategyStatusSummary;
+  strategy: StrategyRuntimeStatus;
 }
 
 interface StoredConnectionStatus {
@@ -30,6 +41,8 @@ export interface AgentRuntimeSnapshot {
   desired: DesiredState;
   authBlocked: boolean;
   config: StrategyConfig;
+  backend: StrategyBackend;
+  strategyFailureThreshold: number;
 }
 
 export interface DiagnosticRecord {
@@ -77,6 +90,27 @@ export class ArenaHeroState extends DurableObject<Cloudflare.Env> {
       });
       return jsonResponse({ desired });
     }
+    if (path === "/backend" && request.method === "GET") {
+      return jsonResponse({ backend: await this.getStrategyBackend() });
+    }
+    if (path === "/backend" && request.method === "PUT") {
+      const value: unknown = await request.json();
+      if (!isStrategyBackendUpdate(value)) {
+        return jsonResponse({ error: "INVALID_BACKEND" }, 400);
+      }
+      await this.ctx.storage.put({
+        strategyBackend: value.backend,
+        ...(value.failureThreshold === undefined
+          ? {}
+          : { strategyFailureThreshold: value.failureThreshold }),
+        backendUpdatedAt: new Date().toISOString(),
+      });
+      return jsonResponse({
+        backend: value.backend,
+        failureThreshold:
+          value.failureThreshold ?? (await this.getStrategyFailureThreshold()),
+      });
+    }
     if (path === "/runtime" && request.method === "GET") {
       return jsonResponse(await this.runtimeSnapshot());
     }
@@ -97,7 +131,8 @@ export class ArenaHeroState extends DurableObject<Cloudflare.Env> {
       const status = await request.json<StoredStatus>();
       if (
         !Number.isInteger(status.tick) ||
-        typeof status.updatedAt !== "string"
+        typeof status.updatedAt !== "string" ||
+        !isStrategyRuntimeStatus(status.strategy)
       ) {
         return jsonResponse({ error: "INVALID_STATUS" }, 400);
       }
@@ -149,29 +184,64 @@ export class ArenaHeroState extends DurableObject<Cloudflare.Env> {
     );
   }
 
+  private async getStrategyBackend(): Promise<StrategyBackend> {
+    const backend =
+      await this.ctx.storage.get<StrategyBackend>("strategyBackend");
+    return isStrategyBackend(backend) ? backend : DEFAULT_STRATEGY_BACKEND;
+  }
+
+  private async getStrategyFailureThreshold(): Promise<number> {
+    const threshold = await this.ctx.storage.get<number>(
+      "strategyFailureThreshold",
+    );
+    return typeof threshold === "number" &&
+      Number.isInteger(threshold) &&
+      threshold >= 1 &&
+      threshold <= 20
+      ? threshold
+      : DEFAULT_STRATEGY_FAILURE_THRESHOLD;
+  }
+
   private async runtimeSnapshot(): Promise<AgentRuntimeSnapshot> {
-    const [desired, authBlocked, config] = await Promise.all([
-      this.ctx.storage.get<DesiredState>("desired"),
-      this.ctx.storage.get<boolean>("authBlocked"),
-      this.getConfig(),
-    ]);
+    const [desired, authBlocked, config, backend, strategyFailureThreshold] =
+      await Promise.all([
+        this.ctx.storage.get<DesiredState>("desired"),
+        this.ctx.storage.get<boolean>("authBlocked"),
+        this.getConfig(),
+        this.getStrategyBackend(),
+        this.getStrategyFailureThreshold(),
+      ]);
     return {
       desired: desired ?? "running",
       authBlocked: authBlocked ?? false,
       config,
+      backend,
+      strategyFailureThreshold,
     };
   }
 
   private async statusResponse(): Promise<Response> {
-    const [desired, authBlocked, phase, status, configUpdatedAt, connection] =
-      await Promise.all([
-        this.ctx.storage.get<DesiredState>("desired"),
-        this.ctx.storage.get<boolean>("authBlocked"),
-        this.ctx.storage.get<ConnectionPhase>("phase"),
-        this.ctx.storage.get<StoredStatus>("lastStatus"),
-        this.ctx.storage.get<string>("configUpdatedAt"),
-        this.ctx.storage.get<StoredConnectionStatus>("connectionStatus"),
-      ]);
+    const [
+      desired,
+      authBlocked,
+      phase,
+      status,
+      configUpdatedAt,
+      backendUpdatedAt,
+      connection,
+      backend,
+      strategyFailureThreshold,
+    ] = await Promise.all([
+      this.ctx.storage.get<DesiredState>("desired"),
+      this.ctx.storage.get<boolean>("authBlocked"),
+      this.ctx.storage.get<ConnectionPhase>("phase"),
+      this.ctx.storage.get<StoredStatus>("lastStatus"),
+      this.ctx.storage.get<string>("configUpdatedAt"),
+      this.ctx.storage.get<string>("backendUpdatedAt"),
+      this.ctx.storage.get<StoredConnectionStatus>("connectionStatus"),
+      this.getStrategyBackend(),
+      this.getStrategyFailureThreshold(),
+    ]);
     const resolvedPhase = phase ?? "idle";
     return jsonResponse({
       desired: desired ?? "running",
@@ -181,8 +251,33 @@ export class ArenaHeroState extends DurableObject<Cloudflare.Env> {
       tick: status?.tick,
       updatedAt: status?.updatedAt,
       configUpdatedAt,
+      backendUpdatedAt,
+      backend,
+      strategyFailureThreshold,
       summary: status?.summary,
+      strategy: status?.strategy,
       connection,
     });
   }
+}
+
+function isStrategyRuntimeStatus(
+  value: unknown,
+): value is StrategyRuntimeStatus {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) {
+    return false;
+  }
+  const data = value as Record<string, unknown>;
+  return (
+    isStrategyBackend(data.backend) &&
+    (data.submittedBackend === "typescript" ||
+      data.submittedBackend === "python" ||
+      data.submittedBackend === "safe_fallback") &&
+    typeof data.strategyVersion === "string" &&
+    typeof data.contractVersion === "string" &&
+    (data.lastError === null || typeof data.lastError === "string") &&
+    typeof data.fallbackUsed === "boolean" &&
+    Number.isInteger(data.consecutiveFailures) &&
+    typeof data.blocked === "boolean"
+  );
 }

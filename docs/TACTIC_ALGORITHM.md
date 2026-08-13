@@ -2,6 +2,12 @@
 
 本文说明当前自动战术真正采用的决策原则，也记录外部方案中没有照搬的部分。所有行为以当前 `Turn`、Arena Hero 规则 v0.14 和官方 Python SDK 为准。
 
+## 统一执行边界
+
+权威决策入口是 `arena_hero_tactic/strategy_core/planner.py` 的 `plan_tick(state, memory, config)`。本地官方 SDK 路径只负责把 `Turn` 转成规范状态并应用返回的 `CommandPlan`；Cloudflare TypeScript Worker 只负责 WebSocket、状态、严格解码、计划校验和命令提交，策略计算由 Python Durable Object 调用同一 Python 核完成。
+
+迁移观察期内，TypeScript planner 只保留为管理员显式选择的 `typescript_primary` 回滚路径。`python_shadow` 不提交 Python 计划；`python_primary` 失败时只运行最小安全计划，不能自动调用完整 TypeScript planner。
+
 ## 决策顺序
 
 每个 Tick 重新读取完整权威状态，再按以下优先级规划：

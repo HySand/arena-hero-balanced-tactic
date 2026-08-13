@@ -113,7 +113,7 @@ describe("worker request routing", () => {
     expect(new URL(assetRequests[0]!.url).pathname).toBe("/");
   });
 
-  it("forwards configuration and status reads to the State DO", async () => {
+  it("forwards configuration, backend, and status reads to the State DO", async () => {
     const { env, agentRequests, stateRequests, stateNames } = testEnvironment();
     const config = await handleRequest(
       new Request("https://worker.example/api/config"),
@@ -123,13 +123,19 @@ describe("worker request routing", () => {
       new Request("https://worker.example/api/status"),
       env,
     );
+    const backend = await handleRequest(
+      new Request("https://worker.example/api/backend"),
+      env,
+    );
 
     expect(config.status).toBe(200);
     expect(status.status).toBe(200);
+    expect(backend.status).toBe(200);
     expect(
       stateRequests.map((request) => new URL(request.url).pathname),
-    ).toEqual(["/config", "/status"]);
+    ).toEqual(["/config", "/status", "/backend"]);
     expect(stateNames).toEqual([
+      PRIMARY_STATE_INSTANCE,
       PRIMARY_STATE_INSTANCE,
       PRIMARY_STATE_INSTANCE,
     ]);
@@ -242,6 +248,53 @@ describe("worker request routing", () => {
     expect(valid.status).toBe(200);
     expect(stateRequests).toHaveLength(1);
     expect(new URL(stateRequests[0]!.url).pathname).toBe("/control");
+    expect(agentRequests).toHaveLength(1);
+    expect(new URL(agentRequests[0]!.url).pathname).toBe("/ensure");
+  });
+
+  it("protects backend changes and notifies the Agent after persistence", async () => {
+    const { env, agentRequests, stateRequests } = testEnvironment();
+    const background: Promise<unknown>[] = [];
+    const context = {
+      waitUntil: (promise: Promise<unknown>) => background.push(promise),
+    };
+    const hidden = await handleRequest(
+      new Request("https://worker.example/api/backend", {
+        method: "PUT",
+        body: JSON.stringify({ backend: "python_primary" }),
+      }),
+      env,
+      context,
+    );
+    const invalid = await handleRequest(
+      new Request("https://worker.example/api/backend", {
+        method: "PUT",
+        headers: { Authorization: ADMIN_AUTHORIZATION },
+        body: JSON.stringify({ backend: "automatic_fallback" }),
+      }),
+      env,
+      context,
+    );
+    const valid = await handleRequest(
+      new Request("https://worker.example/api/backend", {
+        method: "PUT",
+        headers: { Authorization: ADMIN_AUTHORIZATION },
+        body: JSON.stringify({
+          backend: "python_shadow",
+          failureThreshold: 4,
+        }),
+      }),
+      env,
+      context,
+    );
+    await Promise.all(background);
+
+    expect(hidden.status).toBe(404);
+    expect(invalid.status).toBe(400);
+    expect(valid.status).toBe(200);
+    expect(stateRequests).toHaveLength(1);
+    expect(new URL(stateRequests[0]!.url).pathname).toBe("/backend");
+    expect(stateRequests[0]!.method).toBe("PUT");
     expect(agentRequests).toHaveLength(1);
     expect(new URL(agentRequests[0]!.url).pathname).toBe("/ensure");
   });

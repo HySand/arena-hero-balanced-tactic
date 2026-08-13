@@ -1,0 +1,26 @@
+{
+  "$schema": "../worker/node_modules/wrangler/config-schema.json",
+  "name": "arena-hero-python-strategy",
+  "main": "src/entry.py",
+  "compatibility_date": "2026-08-10",
+  "compatibility_flags": ["python_workers"],
+  "workers_dev": true,
+  "durable_objects": {
+    "bindings": [
+      {
+        "name": "STRATEGY",
+        "class_name": "StrategyPlanner"
+      }
+    ]
+  },
+  "migrations": [
+    {
+      "tag": "v1",
+      "new_sqlite_classes": ["StrategyPlanner"]
+    }
+  ],
+  "observability": {
+    "enabled": true,
+    "head_sampling_rate": 1
+  }
+}

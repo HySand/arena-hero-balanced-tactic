@@ -172,14 +172,14 @@ docker compose up --build -d
 
 容器把运行状态和训练数据统一写入 `/data` 命名卷。Linux systemd 说明见 [deploy/README.md](deploy/README.md)。
 
-Cloudflare Worker 版本位于独立的 `worker/` 子项目，可用以下命令验证或部署：
+Cloudflare 免费方案由 `python-worker/` 策略服务和 `worker/` TypeScript 兼容层组成。统一脚本会先检查两个项目，再按 Python Worker → TypeScript Worker 的顺序部署：
 
 ```powershell
 ./scripts/deploy-worker.ps1 -DryRun
 ./scripts/deploy-worker.ps1
 ```
 
-macOS/Linux 使用 `./scripts/deploy-worker.sh`。完整配置、Secrets 和控制接口见 [worker/README.md](worker/README.md)。Cloudflare Git 构建的根目录需设为 `worker`。`.github/workflows/sync-upstream.yml` 每 6 小时合并一次 `jinlingyuan123/arena-hero-balanced-tactic:main`；同步采用 merge 并保护 Worker 专属路径，普通上游变更会先通过独立 Worker 检查，再推送到 `main`；Cloudflare Git 集成会自动检测该变更并重新部署，无需人工修改 Worker 代码。只有专属路径冲突或检查失败时才停止同步。
+macOS/Linux 使用 `./scripts/deploy-worker.sh --dry-run` 和 `./scripts/deploy-worker.sh`。完整配置、Secrets、Shadow 切换和回滚流程见 [worker/README.md](worker/README.md)。Cloudflare Git 集成需要分别配置 Python 和 TypeScript 两个构建，不能只把根目录设为 `worker`。
 
 ## 安全与兼容性
 

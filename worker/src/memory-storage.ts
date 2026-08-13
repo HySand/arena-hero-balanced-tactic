@@ -147,7 +147,11 @@ function nearestDistance(
 export async function encodeStrategyMemory(
   memory: StrategyMemory,
 ): Promise<ArrayBuffer> {
-  const source = new Blob([JSON.stringify(memory)]).stream();
+  return encodeJsonGzip(memory);
+}
+
+export async function encodeJsonGzip(value: unknown): Promise<ArrayBuffer> {
+  const source = new Blob([JSON.stringify(value)]).stream();
   return new Response(
     source.pipeThrough(new CompressionStream("gzip")),
   ).arrayBuffer();
@@ -156,9 +160,13 @@ export async function encodeStrategyMemory(
 export async function decodeStrategyMemory(
   compressed: ArrayBuffer,
 ): Promise<StrategyMemory> {
+  return decodeJsonGzip<StrategyMemory>(compressed);
+}
+
+export async function decodeJsonGzip<T>(compressed: ArrayBuffer): Promise<T> {
   const source = new Blob([compressed]).stream();
   const json = await new Response(
     source.pipeThrough(new DecompressionStream("gzip")),
   ).text();
-  return JSON.parse(json) as StrategyMemory;
+  return JSON.parse(json) as T;
 }

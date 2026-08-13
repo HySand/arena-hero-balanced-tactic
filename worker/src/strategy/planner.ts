@@ -4880,7 +4880,9 @@ function combatAction(
       );
     if (!withdrawing) {
       claimedIntercepts.add(coreBreach.id);
-      if (action.type === "SHOOT") claimedIntercepts.add(action.target_id);
+      if (action.type === "SHOOT" && action.target_id) {
+        claimedIntercepts.add(action.target_id);
+      }
     }
 
     return {

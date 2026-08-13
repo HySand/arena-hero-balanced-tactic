@@ -14,7 +14,7 @@
         <p class="eyebrow">CLOUDFLARE WORKER / DURABLE OBJECT</p>
         <h1>Arena Hero Worker 控制台</h1>
         <p class="subtitle">
-          配置保存在 ArenaHeroAgent Durable Object，保存后下一 Tick 生效。
+          Worker 负责兼容、校验和提交；Python Durable Object 负责共享主策略。
         </p>
       </div>
       <div class="status-badge" id="connectionBadge">读取中</div>
@@ -34,6 +34,71 @@
         <article class="metric">
           <span>策略姿态</span><strong id="postureState">—</strong>
         </article>
+        <article class="metric">
+          <span>策略后端</span><strong id="backendState">—</strong>
+        </article>
+        <article class="metric">
+          <span>实际提交</span><strong id="submittedBackendState">—</strong>
+        </article>
+        <article class="metric">
+          <span>策略版本</span><strong id="strategyVersionState">—</strong>
+        </article>
+        <article class="metric">
+          <span>调用耗时</span><strong id="latencyState">—</strong>
+        </article>
+      </section>
+
+      <section class="panel strategy-panel">
+        <div>
+          <h2>策略后端</h2>
+          <p>
+            默认保持 TypeScript 主路径；先切 Python shadow 观察，再显式切 Python
+            主路径。
+          </p>
+        </div>
+        <label class="select-field">
+          <span>后端模式</span>
+          <select id="strategyBackend">
+            <option value="typescript_primary">
+              TypeScript 主路径（回滚）
+            </option>
+            <option value="python_shadow">Python Shadow（不提交）</option>
+            <option value="python_primary">Python 主路径</option>
+          </select>
+        </label>
+        <label class="select-field">
+          <span>连续失败阻塞阈值</span>
+          <input
+            id="failureThreshold"
+            type="number"
+            min="1"
+            max="20"
+            step="1"
+          />
+        </label>
+        <div class="button-row">
+          <button type="button" class="primary" id="saveBackend">
+            保存后端模式
+          </button>
+        </div>
+        <dl class="strategy-details">
+          <div>
+            <dt>最近成功 Tick</dt>
+            <dd id="lastSuccessTick">—</dd>
+          </div>
+          <div>
+            <dt>连续失败</dt>
+            <dd id="failureState">—</dd>
+          </div>
+          <div>
+            <dt>最近错误</dt>
+            <dd id="strategyError">—</dd>
+          </div>
+          <div>
+            <dt>Shadow 对比</dt>
+            <dd id="shadowState">—</dd>
+          </div>
+        </dl>
       </section>
 
       <section class="panel auth-panel">
@@ -69,8 +134,11 @@
       <section class="panel">
         <div class="section-heading">
           <div>
-            <h2>策略配置</h2>
-            <p>所有字段由 Worker 的配置 schema 生成，避免前后端定义漂移。</p>
+            <h2>TypeScript 回滚策略配置</h2>
+            <p>
+              仅在 TypeScript 主路径或 Shadow 提交侧生效；Python
+              策略使用仓库内共享配置。
+            </p>
           </div>
           <div class="button-row">
             <button type="button" class="secondary" id="resetConfig">

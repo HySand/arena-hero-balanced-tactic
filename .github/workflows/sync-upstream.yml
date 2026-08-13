@@ -43,8 +43,19 @@ jobs:
           merge_base=$(git merge-base HEAD upstream/main)
           protected_changes=$(git diff --name-only "$merge_base" upstream/main -- \
             worker \
+            python-worker \
+            config/strategy_config.json \
+            pyproject.toml \
+            arena_hero_tactic/adapters \
+            arena_hero_tactic/configuration/strategy.py \
+            arena_hero_tactic/strategy_core \
+            arena_hero_tactic/tactic/engine.py \
+            fixtures/python_strategy_tick_1.json \
+            tests/test_python_strategy_service.py \
+            tests/test_strategy_adapters.py \
             scripts/deploy-worker.ps1 \
             scripts/deploy-worker.sh \
+            .github/workflows/ci.yml \
             .github/workflows/sync-upstream.yml)
           if [[ -n "$protected_changes" ]]; then
             echo "Upstream changed Worker-owned paths:" >&2
@@ -66,6 +77,26 @@ jobs:
         if: steps.sync.outputs.changed == 'true'
         run: npm ci
         working-directory: worker
+
+      - name: Set up Python 3.13
+        if: steps.sync.outputs.changed == 'true'
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.13"
+
+      - name: Install uv
+        if: steps.sync.outputs.changed == 'true'
+        run: python -m pip install --disable-pip-version-check uv
+
+      - name: Verify Python Worker after merge
+        if: steps.sync.outputs.changed == 'true'
+        working-directory: python-worker
+        run: |
+          uv sync
+          uv run python sync_shared_core.py
+          uv run python sync_shared_core.py --check
+          uv run pywrangler sync
+          uv run pywrangler deploy --dry-run --config wrangler.jsonc
 
       - name: Verify Worker after merge
         if: steps.sync.outputs.changed == 'true'

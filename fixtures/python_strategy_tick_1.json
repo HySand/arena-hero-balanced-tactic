@@ -1,0 +1,809 @@
+{
+  "expected": {
+    "memory": {
+      "adaptive_action": "WARMUP",
+      "adaptive_average_cycle_ticks": 0.0,
+      "adaptive_failure_rate": 0.0,
+      "adaptive_last_adjust_tick": null,
+      "adaptive_new_cells_per_scout": 0.0,
+      "adaptive_radius_delta": 0,
+      "adaptive_reason": "collecting_samples",
+      "adaptive_sample_count": 1,
+      "adaptive_scarcity_streak": 0,
+      "adaptive_scout_bonus": 0,
+      "adaptive_storage_full_ratio": 0.0,
+      "adaptive_throughput": 0.0,
+      "adaptive_utilization": 0.0,
+      "adaptive_worker_base_target": 6,
+      "adaptive_worker_target": 6,
+      "bounds": [
+        -19,
+        -19,
+        19,
+        19
+      ],
+      "cell_last_seen": [
+        [
+          -5,
+          0,
+          1
+        ],
+        [
+          -4,
+          -1,
+          1
+        ],
+        [
+          -4,
+          0,
+          1
+        ],
+        [
+          -4,
+          1,
+          1
+        ],
+        [
+          -3,
+          -2,
+          1
+        ],
+        [
+          -3,
+          -1,
+          1
+        ],
+        [
+          -3,
+          0,
+          1
+        ],
+        [
+          -3,
+          1,
+          1
+        ],
+        [
+          -3,
+          2,
+          1
+        ],
+        [
+          -2,
+          -3,
+          1
+        ],
+        [
+          -2,
+          -2,
+          1
+        ],
+        [
+          -2,
+          -1,
+          1
+        ],
+        [
+          -2,
+          0,
+          1
+        ],
+        [
+          -2,
+          1,
+          1
+        ],
+        [
+          -2,
+          2,
+          1
+        ],
+        [
+          -2,
+          3,
+          1
+        ],
+        [
+          -1,
+          -4,
+          1
+        ],
+        [
+          -1,
+          -3,
+          1
+        ],
+        [
+          -1,
+          -2,
+          1
+        ],
+        [
+          -1,
+          -1,
+          1
+        ],
+        [
+          -1,
+          0,
+          1
+        ],
+        [
+          -1,
+          1,
+          1
+        ],
+        [
+          -1,
+          2,
+          1
+        ],
+        [
+          -1,
+          3,
+          1
+        ],
+        [
+          -1,
+          4,
+          1
+        ],
+        [
+          0,
+          -5,
+          1
+        ],
+        [
+          0,
+          -4,
+          1
+        ],
+        [
+          0,
+          -3,
+          1
+        ],
+        [
+          0,
+          -2,
+          1
+        ],
+        [
+          0,
+          -1,
+          1
+        ],
+        [
+          0,
+          0,
+          1
+        ],
+        [
+          0,
+          1,
+          1
+        ],
+        [
+          0,
+          2,
+          1
+        ],
+        [
+          0,
+          3,
+          1
+        ],
+        [
+          0,
+          4,
+          1
+        ],
+        [
+          0,
+          5,
+          1
+        ],
+        [
+          1,
+          -4,
+          1
+        ],
+        [
+          1,
+          -3,
+          1
+        ],
+        [
+          1,
+          -2,
+          1
+        ],
+        [
+          1,
+          -1,
+          1
+        ],
+        [
+          1,
+          0,
+          1
+        ],
+        [
+          1,
+          1,
+          1
+        ],
+        [
+          1,
+          2,
+          1
+        ],
+        [
+          1,
+          3,
+          1
+        ],
+        [
+          1,
+          4,
+          1
+        ],
+        [
+          2,
+          -3,
+          1
+        ],
+        [
+          2,
+          -2,
+          1
+        ],
+        [
+          2,
+          -1,
+          1
+        ],
+        [
+          2,
+          0,
+          1
+        ],
+        [
+          2,
+          1,
+          1
+        ],
+        [
+          2,
+          2,
+          1
+        ],
+        [
+          2,
+          3,
+          1
+        ],
+        [
+          3,
+          -2,
+          1
+        ],
+        [
+          3,
+          -1,
+          1
+        ],
+        [
+          3,
+          0,
+          1
+        ],
+        [
+          3,
+          1,
+          1
+        ],
+        [
+          3,
+          2,
+          1
+        ],
+        [
+          4,
+          -1,
+          1
+        ],
+        [
+          4,
+          0,
+          1
+        ],
+        [
+          4,
+          1,
+          1
+        ],
+        [
+          5,
+          0,
+          1
+        ]
+      ],
+      "combat_sectors": {},
+      "combat_target_started": {},
+      "combat_targets": {},
+      "cycle_durations": [],
+      "economy_experiment_block_id": null,
+      "economy_history": [
+        {
+          "assignments": 0,
+          "busy": 0,
+          "candidates": 0,
+          "deposit_full": 0,
+          "deposit_successes": 0,
+          "deposited": 0,
+          "harvest_failures": 0,
+          "harvest_successes": 0,
+          "harvested": 0,
+          "new_cells": 61,
+          "scouts": 0,
+          "storage_full": 0,
+          "tick": 1,
+          "workers": 0
+        }
+      ],
+      "effective_resource_radius": null,
+      "enemy_sightings": [],
+      "enemy_tracks": {},
+      "first_tick": 1,
+      "fleeing_worker_ticks": 0,
+      "guard_ranger_ids": [],
+      "guard_sectors": {},
+      "guard_targets": {},
+      "known_cells": [
+        [
+          0,
+          0
+        ],
+        [
+          -1,
+          0
+        ],
+        [
+          0,
+          -1
+        ],
+        [
+          0,
+          1
+        ],
+        [
+          1,
+          0
+        ],
+        [
+          -2,
+          0
+        ],
+        [
+          -1,
+          -1
+        ],
+        [
+          -1,
+          1
+        ],
+        [
+          0,
+          -2
+        ],
+        [
+          0,
+          2
+        ],
+        [
+          1,
+          -1
+        ],
+        [
+          1,
+          1
+        ],
+        [
+          2,
+          0
+        ],
+        [
+          -3,
+          0
+        ],
+        [
+          -2,
+          -1
+        ],
+        [
+          -2,
+          1
+        ],
+        [
+          -1,
+          -2
+        ],
+        [
+          -1,
+          2
+        ],
+        [
+          0,
+          -3
+        ],
+        [
+          0,
+          3
+        ],
+        [
+          1,
+          -2
+        ],
+        [
+          1,
+          2
+        ],
+        [
+          2,
+          -1
+        ],
+        [
+          2,
+          1
+        ],
+        [
+          3,
+          0
+        ],
+        [
+          -4,
+          0
+        ],
+        [
+          -3,
+          -1
+        ],
+        [
+          -3,
+          1
+        ],
+        [
+          -2,
+          -2
+        ],
+        [
+          -2,
+          2
+        ],
+        [
+          -1,
+          -3
+        ],
+        [
+          -1,
+          3
+        ],
+        [
+          0,
+          -4
+        ],
+        [
+          0,
+          4
+        ],
+        [
+          1,
+          -3
+        ],
+        [
+          1,
+          3
+        ],
+        [
+          2,
+          -2
+        ],
+        [
+          2,
+          2
+        ],
+        [
+          3,
+          -1
+        ],
+        [
+          3,
+          1
+        ],
+        [
+          4,
+          0
+        ],
+        [
+          -5,
+          0
+        ],
+        [
+          -4,
+          -1
+        ],
+        [
+          -4,
+          1
+        ],
+        [
+          -3,
+          -2
+        ],
+        [
+          -3,
+          2
+        ],
+        [
+          -2,
+          -3
+        ],
+        [
+          -2,
+          3
+        ],
+        [
+          -1,
+          -4
+        ],
+        [
+          -1,
+          4
+        ],
+        [
+          0,
+          -5
+        ],
+        [
+          0,
+          5
+        ],
+        [
+          1,
+          -4
+        ],
+        [
+          1,
+          4
+        ],
+        [
+          2,
+          -3
+        ],
+        [
+          2,
+          3
+        ],
+        [
+          3,
+          -2
+        ],
+        [
+          3,
+          2
+        ],
+        [
+          4,
+          -1
+        ],
+        [
+          4,
+          1
+        ],
+        [
+          5,
+          0
+        ]
+      ],
+      "last_core_damage_tick": null,
+      "last_core_move_tick": null,
+      "last_posture": "ECONOMY",
+      "last_threat_score": 0.0,
+      "last_tick": 1,
+      "last_worker_loss_tick": null,
+      "living_worker_ids": [],
+      "obstacle_cells": [],
+      "owner_username": "player",
+      "peak_hp": {},
+      "peak_hp_by_type": {},
+      "planned_deposit_this_turn": 0,
+      "planned_deposited": 0,
+      "planned_population_relief": 0,
+      "population_relief_worker_ids": [],
+      "pursuit_unit_ids": [],
+      "recent_positions": {},
+      "resource_assignment_count": 0,
+      "resource_candidate_count": 0,
+      "resource_chunks": [],
+      "resource_hints": [],
+      "resource_radius_limit": 10,
+      "scout_target_started": {},
+      "scout_targets": {},
+      "scouting_worker_ticks": 0,
+      "tracker_assignments": {},
+      "turns_seen": 1,
+      "version": 12,
+      "visited_cells": [],
+      "worker_block_targets": {},
+      "worker_cycle_started": {},
+      "worker_losses": 0,
+      "worker_sectors": {},
+      "worker_targets": {},
+      "worker_ticks": 0
+    },
+    "plan": {
+      "core_action": {
+        "type": "SPAWN",
+        "unit_type": "WORKER"
+      },
+      "tick": 1
+    },
+    "summary": {
+      "actions": {
+        "SPAWN": 1
+      },
+      "posture": "ECONOMY",
+      "retreating": false,
+      "threatened": false
+    }
+  },
+  "request": {
+    "agent_id": "arena-hero-primary",
+    "config": {
+      "adaptive_economy": {
+        "adjustment_cooldown_ticks": 6,
+        "enabled": true,
+        "healthy_throughput_per_worker": 0.05,
+        "long_cycle_ticks": 24,
+        "low_throughput_per_worker": 0.025,
+        "max_harvest_failure_rate": 0.25,
+        "max_resource_radius": 96,
+        "max_scout_bonus": 2,
+        "min_resource_radius": 6,
+        "radius_step": 2,
+        "scarcity_ticks": 3,
+        "storage_full_ratio": 0.5,
+        "warmup_ticks": 8,
+        "window_ticks": 12,
+        "worker_target_max": 8,
+        "worker_target_min": 4
+      },
+      "core": {
+        "cover_gain_required": 1.5,
+        "migration_cooldown_ticks": 20,
+        "migration_danger_score": 3.0,
+        "migration_enabled": true,
+        "migration_min_rangers": 1,
+        "migration_min_vanguards": 1,
+        "migration_min_workers": 0,
+        "migration_start_ticks": 0,
+        "worker_evacuation_radius": 8
+      },
+      "extensions": {},
+      "pacing": {
+        "early_exploration_radius": 12,
+        "early_population": 6,
+        "early_resource_radius": 10,
+        "early_ticks": 80,
+        "early_worker_scouts": 1,
+        "enabled": true,
+        "late_exploration_radius": 42,
+        "late_resource_radius": 40,
+        "late_worker_scouts": 6,
+        "mid_exploration_radius": 24,
+        "mid_population": 10,
+        "mid_resource_radius": 22,
+        "mid_ticks": 180,
+        "mid_worker_scouts": 3,
+        "offense_after_ticks": 180,
+        "offense_enabled": true,
+        "offense_min_defenders": 3,
+        "offense_min_population": 10,
+        "offense_min_rangers": 1,
+        "offense_min_resources": 35,
+        "offense_min_vanguards": 2,
+        "offense_radius": 36
+      },
+      "production": {
+        "after_plan": "adaptive",
+        "enabled": true,
+        "max_population": 18,
+        "order": [
+          {
+            "target": 6,
+            "unit_type": "WORKER"
+          },
+          {
+            "target": 2,
+            "unit_type": "VANGUARD"
+          },
+          {
+            "target": 3,
+            "unit_type": "RANGER"
+          }
+        ],
+        "reserve_resources": 5
+      },
+      "rangers": {
+        "guard_denominator": 3,
+        "guard_numerator": 2,
+        "guard_radius": 3
+      },
+      "threat": {
+        "guarded_score": 2.0,
+        "survival_score": 4.0
+      },
+      "vanguards": {
+        "beacon_after_ticks": 240,
+        "beacon_min_defenders": 4,
+        "early_scout_radius": 80,
+        "late_scout_radius": 120
+      },
+      "version": 1,
+      "workers": {
+        "max_economy_scouts": 8,
+        "max_scouts_under_threat": 1,
+        "recovery_worker_floor": 2,
+        "safe_scout_radius": 12
+      }
+    },
+    "config_version": 1,
+    "contract_version": "1",
+    "memory": {
+      "version": 12
+    },
+    "options": {
+      "core_migration_enabled": true,
+      "profile": "economy",
+      "safety_enabled": true
+    },
+    "state": {
+      "champion_beacon": {
+        "position": [
+          20,
+          20
+        ]
+      },
+      "events": [],
+      "objects": [
+        {
+          "controlled": true,
+          "hp": 5,
+          "id": "00000000-0000-4000-8000-000000000001",
+          "kind": "CORE",
+          "owner_username": "player",
+          "position": [
+            0,
+            0
+          ],
+          "shield": 5,
+          "state": "NORMAL"
+        }
+      ],
+      "population": 0,
+      "population_tier": 0,
+      "resource_space": 5,
+      "resources": 5,
+      "status": "ACTIVE",
+      "unit_costs": {
+        "RANGER": 12,
+        "VANGUARD": 10,
+        "WORKER": 5
+      },
+      "upkeep_next_tick": 0
+    },
+    "strategy_version": "python-economy-v1",
+    "tick": 1
+  }
+}

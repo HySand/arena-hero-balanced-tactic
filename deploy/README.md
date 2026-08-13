@@ -37,3 +37,19 @@ loginctl enable-linger "$USER"
 ## Windows / macOS / Linux 本地
 
 Windows 使用 `scripts/run_tactic.cmd` 或根目录 `run_all.cmd`；macOS/Linux 使用 `./scripts/run_tactic.sh`。首次运行前安装 Python 3.11+，并在项目根目录 `.env` 提供 API key。
+
+## Cloudflare 免费双 Worker
+
+Cloudflare 部署不使用本目录的 Docker/systemd 进程。仓库根目录的统一脚本会先验证 Python 策略 Durable Object 和 TypeScript 兼容层，再按依赖顺序部署：
+
+```powershell
+./scripts/deploy-worker.ps1 -DryRun
+./scripts/deploy-worker.ps1
+```
+
+```sh
+./scripts/deploy-worker.sh --dry-run
+./scripts/deploy-worker.sh
+```
+
+首次部署前在 `worker/` 执行 `npm run secrets`。后端默认保持 `typescript_primary`，部署后先进入 `python_shadow` 观察，再显式切到 `python_primary`；完整操作和回滚命令见 [worker/README.md](../worker/README.md)。

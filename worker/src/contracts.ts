@@ -68,7 +68,8 @@ export type UnitAction =
   | { type: "HARVEST" }
   | { type: "DEPOSIT" }
   | { type: "SWEEP"; direction: Direction }
-  | { type: "SHOOT"; target_id: string; expected_cell: Position }
+  | { type: "SHOOT"; target_id?: string; expected_cell: Position }
+  | { type: "HEAL" }
   | { type: "PICKUP_BEACON" }
   | { type: "DROP_BEACON" }
   | { type: "SELF_DESTRUCT" };
@@ -77,10 +78,12 @@ export type CoreAction =
   | { type: "WAIT" }
   | { type: "SPAWN"; unit_type: UnitType }
   | { type: "REPAIR_SHIELD" }
+  | { type: "HEAL" }
   | { type: "START_MOVE"; direction: Direction }
   | { type: "CANCEL_MOVE" }
   | { type: "PICKUP_BEACON" }
-  | { type: "DROP_BEACON" };
+  | { type: "DROP_BEACON" }
+  | { type: "SELF_DESTRUCT" };
 
 export interface CommandPlan {
   tick: number;
@@ -200,6 +203,56 @@ export interface DecisionSummary {
   militaryPressureTicks: number;
   actions: Record<string, number>;
   planningMs: number;
+}
+
+export type StrategyBackend =
+  | "typescript_primary"
+  | "python_shadow"
+  | "python_primary";
+
+export type StrategyStatusPosture =
+  | Posture
+  | "GUARDED"
+  | "SURVIVAL"
+  | "RESPAWNING";
+
+export interface StrategyStatusSummary {
+  posture: StrategyStatusPosture;
+  threatened: boolean;
+  retreating: boolean;
+  actions: Record<string, number>;
+  planningMs: number;
+}
+
+export interface StrategyShadowStatus {
+  matched: boolean;
+  unitActionDifferences: number;
+  coreActionDifferent: boolean;
+  summaryDifferent: boolean;
+  memoryMetadataDifferent: boolean;
+  comparedTicks?: number;
+  matchedTicks?: number;
+  mismatchedTicks?: number;
+  cumulativeUnitActionDifferences?: number;
+  cumulativeCoreActionDifferences?: number;
+  cumulativeSummaryDifferences?: number;
+  cumulativeMemoryMetadataDifferences?: number;
+  lastComparedTick?: number;
+  lastDifferenceTick?: number;
+}
+
+export interface StrategyRuntimeStatus {
+  backend: StrategyBackend;
+  submittedBackend: "typescript" | "python" | "safe_fallback";
+  strategyVersion: string;
+  contractVersion: string;
+  latencyMs?: number;
+  lastSuccessTick?: number;
+  lastError: string | null;
+  fallbackUsed: boolean;
+  consecutiveFailures: number;
+  blocked: boolean;
+  shadow?: StrategyShadowStatus;
 }
 
 export interface PlanResult {
