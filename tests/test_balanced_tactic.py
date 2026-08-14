@@ -294,6 +294,29 @@ class BalancedTacticTests(unittest.TestCase):
         choose_actions(turn)
         self.assertEqual(turn.units, ())
 
+    def test_respawn_resets_lifecycle_memory_on_core_return(self) -> None:
+        memory = TacticMemory(first_tick=1, last_tick=300, turns_seen=300)
+        choose_actions(FakeTurn(tick=301, core=None), memory)
+
+        worker = FakeUnit(1, (0, 0), UnitType.WORKER)
+        resumed = FakeTurn(
+            tick=302,
+            core=FakeCore(position=(0, 0)),
+            units=[worker],
+        )
+        choose_actions(resumed, memory)
+
+        self.assertEqual(memory.first_tick, 302)
+        self.assertEqual(memory.turns_seen, 1)
+        self.assertEqual(
+            _strategy_phase(
+                resumed,
+                memory,
+                strategy_config_from_dict(default_config_dict()),
+            ),
+            PHASE_EARLY,
+        )
+
     def test_worker_harvests_and_deposits(self) -> None:
         harvester = FakeUnit(1, (1, 0), UnitType.WORKER)
         depositor = FakeUnit(2, (0, 0), UnitType.WORKER, cargo=1)

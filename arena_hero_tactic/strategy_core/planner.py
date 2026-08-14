@@ -346,6 +346,7 @@ class TacticMemory:
     turns_seen: int = 0
     first_tick: int | None = None
     last_tick: int = 0
+    respawn_reset_pending: bool = False
     enemy_sightings: dict[Position, int] = field(default_factory=dict)
     enemy_tracks: dict[UUID, EnemyTrack] = field(default_factory=dict)
     tracker_assignments: dict[UUID, UUID] = field(default_factory=dict)
@@ -413,6 +414,10 @@ class TacticMemory:
             if turn.core is not None
             else None
         )
+        if turn.core is None:
+            self.respawn_reset_pending = True
+        elif self.respawn_reset_pending:
+            self._reset_for_owner(owner_username)
         # A lower Tick means a new world epoch. Old targets and threat sightings
         # must not pull workers around stale coordinates.
         if self.last_tick and turn.tick < self.last_tick:
@@ -830,6 +835,7 @@ class TacticMemory:
         self.turns_seen = 0
         self.first_tick = None
         self.last_tick = 0
+        self.respawn_reset_pending = False
         self.enemy_sightings.clear()
         self.enemy_tracks.clear()
         self.tracker_assignments.clear()
@@ -1002,6 +1008,7 @@ class TacticMemory:
                     turns_seen=max(0, int(data.get("turns_seen", 0))),
                     first_tick=data.get("first_tick"),
                     last_tick=max(0, int(data.get("last_tick", 0))),
+                    respawn_reset_pending=bool(data.get("respawn_reset_pending", False)),
                     enemy_sightings={
                         (int(entry[0]), int(entry[1])): int(entry[2])
                         for entry in data.get("enemy_sightings", [])
@@ -1181,6 +1188,7 @@ class TacticMemory:
             "turns_seen": self.turns_seen,
             "first_tick": self.first_tick,
             "last_tick": self.last_tick,
+            "respawn_reset_pending": self.respawn_reset_pending,
             "enemy_sightings": [
                 [cell[0], cell[1], tick]
                 for cell, tick in sorted(self.enemy_sightings.items())
