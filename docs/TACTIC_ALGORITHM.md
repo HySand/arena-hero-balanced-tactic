@@ -4,9 +4,9 @@
 
 ## 统一执行边界
 
-权威决策入口是 `arena_hero_tactic/strategy_core/planner.py` 的 `plan_tick(state, memory, config)`。本地官方 SDK 路径只负责把 `Turn` 转成规范状态并应用返回的 `CommandPlan`；Cloudflare TypeScript Worker 只负责 WebSocket、状态、严格解码、计划校验和命令提交，策略计算由 Python Durable Object 调用同一 Python 核完成。
+本地官方 SDK 路径的权威决策入口是 `arena_hero_tactic/strategy_core/planner.py` 的 `plan_tick(state, memory, config)`。Cloudflare TypeScript Worker 使用自身的 TypeScript planner，负责策略计算、WebSocket、状态、严格解码、计划校验和命令提交。
 
-迁移观察期内，TypeScript planner 只保留为管理员显式选择的 `typescript_primary` 回滚路径。`python_shadow` 不提交 Python 计划；`python_primary` 失败时只运行最小安全计划，不能自动调用完整 TypeScript planner。
+Cloudflare 部署只包含一个自包含的 TypeScript Worker；它不依赖 Python Durable Object、Shadow 路径或回滚后端。
 
 ## 决策顺序
 

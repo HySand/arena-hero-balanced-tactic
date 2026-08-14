@@ -1,47 +1,28 @@
 import { DurableObject } from "cloudflare:workers";
 
 import type { StoredSubmission } from "./arena-command";
-import type {
-  CommandPlan,
-  PlayerState,
-  ReceivedData,
-  StrategyRuntimeStatus,
-  StrategyStatusSummary,
-} from "./contracts";
+import type { CommandPlan, ReceivedData, StrategyMemory } from "./contracts";
 import { PRIMARY_STATE_INSTANCE } from "./instances";
-import { decodeJsonGzip, encodeJsonGzip } from "./json-storage";
-import { applyManualControls, type ControlReceipt } from "./manual-control";
+import {
+  compactStrategyMemory,
+  decodeStrategyMemory,
+  encodeStrategyMemory,
+  strategyMemorySize,
+} from "./memory-storage";
 import { decodeGameMessage, serializePlan } from "./protocol";
-import {
-  applyStrategyStatusHistory,
-  runStrategyBackend,
-} from "./python-strategy/backend";
-import { requestPythonStrategy } from "./python-strategy/client";
-import {
-  buildPythonStrategyRequest,
-  emptyPythonMemory,
-  isPythonStrategyMemory,
-  type PythonStrategyMemory,
-} from "./python-strategy/wire";
-import {
-  STRATEGY_FAILURE_THRESHOLD,
-  type AgentRuntimeSnapshot,
-  type ArenaHeroState,
-} from "./state";
-import { safeFallbackPlan } from "./safe-fallback";
-import { validatePlan } from "./plan-validation";
+import type { AgentRuntimeSnapshot, ArenaHeroState } from "./state";
+import { emptyMemory, planTick, safeFallbackPlan } from "./strategy/planner";
+import { validatePlan } from "./strategy/validation";
 
 const GAME_WS_URL = "https://api.arenahero.io/api/v1/game/ws";
 const RECONNECT_MIN_MS = 250;
 const RECONNECT_MAX_MS = 5000;
 const WS_CONNECT_TIMEOUT_MS = 5000;
 const CONNECTION_STALE_MS = 90_000;
-const PYTHON_STRATEGY_TIMEOUT_MS = 2500;
 
 export interface Env extends Cloudflare.Env {
   ASSETS: Fetcher;
   STATE: DurableObjectNamespace<ArenaHeroState>;
-  PYTHON_STRATEGY: DurableObjectNamespace;
   ARENA_HERO_API_KEY: string;
   ADMIN_CONTROL_SECRET: string;
 }
@@ -78,7 +59,7 @@ export class ArenaHeroAgent extends DurableObject<Env> {
   private reconnectAttempt = 0;
   private announcedTick: number | undefined;
   private lastMessageAt = 0;
-  private pythonStrategyMemory: PythonStrategyMemory | undefined;
+  private strategyMemory: StrategyMemory | undefined;
   private receipts: Partial<Record<"AGENT" | "MANUAL", ReceivedData>> = {};
   private messageChain: Promise<void> = Promise.resolve();
 
@@ -103,19 +84,16 @@ export class ArenaHeroAgent extends DurableObject<Env> {
     return response.json<AgentRuntimeSnapshot>();
   }
 
-  private async loadPythonStrategyMemory(): Promise<PythonStrategyMemory> {
-    if (this.pythonStrategyMemory) return this.pythonStrategyMemory;
+  private async loadStrategyMemory(): Promise<StrategyMemory> {
+    if (this.strategyMemory) return this.strategyMemory;
     const [compressed, legacy] = await Promise.all([
-      this.ctx.storage.get<ArrayBuffer>("pythonStrategyMemoryGzip"),
-      this.ctx.storage.get<unknown>("pythonStrategyMemory"),
+      this.ctx.storage.get<ArrayBuffer>("strategyMemoryGzip"),
+      this.ctx.storage.get<StrategyMemory>("strategyMemory"),
     ]);
-    const decoded = compressed
-      ? await decodeJsonGzip<unknown>(compressed)
-      : legacy;
-    this.pythonStrategyMemory = isPythonStrategyMemory(decoded)
-      ? decoded
-      : emptyPythonMemory();
-    return this.pythonStrategyMemory;
+    this.strategyMemory = compressed
+      ? await decodeStrategyMemory(compressed)
+      : (legacy ?? emptyMemory());
+    return this.strategyMemory;
   }
 
   private async ensureRunning(): Promise<void> {
@@ -276,7 +254,10 @@ export class ArenaHeroAgent extends DurableObject<Env> {
     }
   }
 
-  private async handleState(tick: number, state: PlayerState): Promise<void> {
+  private async handleState(
+    tick: number,
+    state: Parameters<typeof planTick>[1],
+  ): Promise<void> {
     this.recordDiagnostic("state_received", tick, {
       population: state.population,
       objects: state.objects.length,
@@ -289,195 +270,94 @@ export class ArenaHeroAgent extends DurableObject<Env> {
       this.dispatchSubmission(existing);
       return;
     }
-    if (existing && existing.tick > tick) {
-      structuredLog("stale_state_discarded", {
-        tick,
-        lastSubmissionTick: existing.tick,
-      });
-      this.recordDiagnostic("stale_state_discarded", tick, {
-        lastSubmissionTick: existing.tick,
-      });
-      return;
-    }
-    const runtime = await this.runtimeSnapshot();
-    const [pythonMemory, previousStatus] = await Promise.all([
-      this.loadPythonStrategyMemory(),
-      this.ctx.storage.get<StrategyRuntimeStatus>("strategyRuntimeStatus"),
+    const [storedMemory, runtime] = await Promise.all([
+      this.loadStrategyMemory(),
+      this.runtimeSnapshot(),
     ]);
+    const originalSize = strategyMemorySize(storedMemory);
+    const memory = compactStrategyMemory(storedMemory, state);
+    const compactedSize = strategyMemorySize(memory);
+    if (memory !== storedMemory) {
+      this.strategyMemory = memory;
+      structuredLog("strategy_memory_compacted", {
+        tick,
+        before: originalSize,
+        after: compactedSize,
+      });
+    }
+    const config = runtime.config;
+    let plan: CommandPlan;
+    let nextMemory = memory;
+    let summary: ReturnType<typeof planTick>["summary"] | undefined;
     this.recordDiagnostic("planner_started", tick, {
-      memoryKeys: Object.keys(pythonMemory).length,
+      obstacles: compactedSize.obstacles,
+      explored: compactedSize.explored,
+      resources: compactedSize.resources,
+      enemies: Object.keys(memory.enemies).length,
     });
-    const outcome = await runStrategyBackend({
-      tick,
-      state,
-      runPython: async () => {
-        const request = buildPythonStrategyRequest(
-          PRIMARY_STATE_INSTANCE,
-          tick,
-          state,
-          pythonMemory,
-          runtime.config,
-        );
-        return requestPythonStrategy(
-          this.pythonStrategy(),
-          request,
-          PYTHON_STRATEGY_TIMEOUT_MS,
-        );
-      },
-      validate: validatePlan,
-      fallback: () => safeFallbackPlan(tick, state),
-    });
-    const strategyStatus = applyStrategyStatusHistory(
-      outcome.status,
-      previousStatus,
-      tick,
-      STRATEGY_FAILURE_THRESHOLD,
-    );
-    const manual = await this.applyManualControls(tick, state, outcome.plan);
-    const plan = manual.plan;
-    const summary = outcome.summary;
-    this.recordDiagnostic("planner_completed", tick, {
-      backend: strategyStatus.backend,
-      submittedBackend: strategyStatus.submittedBackend,
-      actions: Object.keys(plan.unit_actions ?? {}).length,
-      fallbackUsed: strategyStatus.fallbackUsed,
-      consecutiveFailures: strategyStatus.consecutiveFailures,
-      blocked: strategyStatus.blocked,
-    });
+    try {
+      const result = planTick(tick, state, memory, config);
+      this.recordDiagnostic("planner_completed", tick, {
+        actions: Object.keys(result.plan.unit_actions ?? {}).length,
+      });
+      plan = validatePlan(result.plan, state)
+        ? result.plan
+        : safeFallbackPlan(tick, state);
+      nextMemory = result.memory;
+      summary = result.summary;
+    } catch (error) {
+      const reason = errorName(error);
+      this.recordDiagnostic("planner_failed", tick, { reason });
+      structuredLog("planner_failed", { tick, reason });
+      plan = safeFallbackPlan(tick, state);
+    }
     const submission: StoredSubmission = {
       tick: plan.tick,
       key: `agent-${plan.tick}-primary`,
       body: serializePlan(plan),
     };
-    const checkpointStartedAt = Date.now();
-    const compressedPythonMemory = outcome.pythonMemory
-      ? await encodeJsonGzip(outcome.pythonMemory)
-      : undefined;
-    await this.ctx.storage.put({
-      lastSubmission: submission,
-      strategyRuntimeStatus: strategyStatus,
-      ...(compressedPythonMemory === undefined
-        ? {}
-        : { pythonStrategyMemoryGzip: compressedPythonMemory }),
-    });
-    if (outcome.pythonMemory) {
-      this.pythonStrategyMemory = outcome.pythonMemory;
-    }
-    this.recordDiagnostic("memory_checkpoint_saved", tick, {
-      pythonBytes: compressedPythonMemory?.byteLength ?? 0,
-      durationMs: Date.now() - checkpointStartedAt,
-    });
     this.dispatchSubmission(submission);
     this.recordDiagnostic("command_submit_dispatched", tick);
-    this.ctx.waitUntil(
-      this.saveDashboardStatus(
-        tick,
-        state,
-        plan,
-        outcome.pythonMemory ?? pythonMemory,
-        summary,
-        strategyStatus,
-        manual.receipts,
-      ).catch((error: unknown) => {
-        structuredLog("status_save_failed", {
-          tick,
-          reason: errorName(error),
-        });
-      }),
-    );
-    structuredLog("plan_computed", {
+
+    const status = {
       tick,
-      backend: strategyStatus.backend,
-      submittedBackend: strategyStatus.submittedBackend,
-      strategyVersion: strategyStatus.strategyVersion,
-      contractVersion: strategyStatus.contractVersion,
-      latencyMs: strategyStatus.latencyMs,
-      lastError: strategyStatus.lastError,
-      consecutiveFailures: strategyStatus.consecutiveFailures,
-      blocked: strategyStatus.blocked,
-      posture: summary?.posture,
-      threatened: summary?.threatened,
-      retreating: summary?.retreating,
-      planningMs: summary ? Math.round(summary.planningMs) : undefined,
-      actions: summary?.actions ?? {},
-    });
-  }
-
-  private async applyManualControls(
-    tick: number,
-    state: PlayerState,
-    plan: CommandPlan,
-  ): Promise<{ plan: CommandPlan; receipts: ControlReceipt[] }> {
-    try {
-      const response = await this.state().fetch(
-        "https://state.internal/control-queue",
-      );
-      if (!response.ok) {
-        throw new Error(`Control queue read failed: ${response.status}`);
-      }
-      const payload = await response.json<{ pending?: unknown[] }>();
-      const result = applyManualControls(
-        tick,
-        state,
-        plan,
-        Array.isArray(payload.pending) ? payload.pending : [],
-      );
-      if (result.receipts.length > 0) {
-        const ack = await this.state().fetch(
-          "https://state.internal/control-queue/ack",
-          {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ receipts: result.receipts }),
-          },
-        );
-        if (!ack.ok) {
-          throw new Error(
-            `Control queue acknowledgement failed: ${ack.status}`,
-          );
-        }
-      }
-      return result;
-    } catch (error) {
-      structuredLog("manual_control_failed", {
-        tick,
-        reason: errorName(error),
-      });
-      return { plan, receipts: [] };
-    }
-  }
-
-  private async saveDashboardStatus(
-    tick: number,
-    state: PlayerState,
-    plan: CommandPlan,
-    memory: PythonStrategyMemory,
-    summary: StrategyStatusSummary | undefined,
-    strategy: StrategyRuntimeStatus,
-    controlReceipts: ControlReceipt[],
-  ): Promise<void> {
-    const response = await this.state().fetch(
+      updatedAt: new Date().toISOString(),
+      ...(summary ? { summary } : {}),
+    };
+    const statusResponse = await this.state().fetch(
       "https://state.internal/status-update",
       {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          tick,
-          updatedAt: new Date().toISOString(),
-          state,
-          plan,
-          memory,
-          ...(summary ? { summary } : {}),
-          strategy,
-          ...(controlReceipts.length > 0 ? { controlReceipts } : {}),
-        }),
+        body: JSON.stringify(status),
       },
     );
-    if (response.ok) {
-      this.recordDiagnostic("status_saved", tick);
-    } else {
-      structuredLog("status_save_failed", { tick, status: response.status });
+    if (!statusResponse.ok) {
+      throw new Error(`State status update failed: ${statusResponse.status}`);
     }
+    this.recordDiagnostic("status_saved", tick);
+    structuredLog("plan_computed", {
+      tick,
+      posture: summary?.posture,
+      threatened: summary?.threatened,
+      retreating: summary?.retreating,
+      controlRadius: summary?.controlRadius,
+      reserveCount: summary?.reserveCount,
+      planningMs: summary ? Math.round(summary.planningMs) : undefined,
+      actions: summary?.actions ?? {},
+    });
+
+    const checkpointStartedAt = Date.now();
+    this.strategyMemory = nextMemory;
+    const compressedMemory = await encodeStrategyMemory(nextMemory);
+    await this.ctx.storage.put({
+      strategyMemoryGzip: compressedMemory,
+      lastSubmission: submission,
+    });
+    this.recordDiagnostic("memory_checkpoint_saved", tick, {
+      bytes: compressedMemory.byteLength,
+      durationMs: Date.now() - checkpointStartedAt,
+    });
   }
 
   private async handleClose(socket: WebSocket, code: number): Promise<void> {
@@ -578,10 +458,6 @@ export class ArenaHeroAgent extends DurableObject<Env> {
 
   private state(): DurableObjectStub<ArenaHeroState> {
     return this.env.STATE.getByName(PRIMARY_STATE_INSTANCE);
-  }
-
-  private pythonStrategy(): DurableObjectStub {
-    return this.env.PYTHON_STRATEGY.getByName(PRIMARY_STATE_INSTANCE);
   }
 }
 

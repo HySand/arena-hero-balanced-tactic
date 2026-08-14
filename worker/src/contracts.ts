@@ -68,8 +68,7 @@ export type UnitAction =
   | { type: "HARVEST" }
   | { type: "DEPOSIT" }
   | { type: "SWEEP"; direction: Direction }
-  | { type: "SHOOT"; target_id?: string; expected_cell: Position }
-  | { type: "HEAL" }
+  | { type: "SHOOT"; target_id: string; expected_cell: Position }
   | { type: "PICKUP_BEACON" }
   | { type: "DROP_BEACON" }
   | { type: "SELF_DESTRUCT" };
@@ -78,12 +77,10 @@ export type CoreAction =
   | { type: "WAIT" }
   | { type: "SPAWN"; unit_type: UnitType }
   | { type: "REPAIR_SHIELD" }
-  | { type: "HEAL" }
   | { type: "START_MOVE"; direction: Direction }
   | { type: "CANCEL_MOVE" }
   | { type: "PICKUP_BEACON" }
-  | { type: "DROP_BEACON" }
-  | { type: "SELF_DESTRUCT" };
+  | { type: "DROP_BEACON" };
 
 export interface CommandPlan {
   tick: number;
@@ -103,29 +100,110 @@ export type GameMessage =
   | { type: "state"; data: PlayerState }
   | { type: "received"; data: ReceivedData };
 
-export type StrategyStatusPosture =
-  | Posture
-  | "GUARDED"
-  | "SURVIVAL"
-  | "RESPAWNING";
+export interface ResourceObservation {
+  position: Position;
+  lastSeenTick: number;
+  depletedAtTick?: number;
+  contestedAtTick?: number;
+}
 
-export interface StrategyStatusSummary {
-  posture: StrategyStatusPosture;
+export interface EnemyObservation {
+  id: string;
+  kind: "CORE" | "UNIT";
+  unitType?: UnitType;
+  position: Position;
+  hp: number;
+  lastSeenTick: number;
+  lastMove?: Direction;
+  movementStreak?: number;
+}
+
+export type RoleKind =
+  | "RESERVE"
+  | "CONTROL_RALLY"
+  | "PATROL"
+  | "OBSERVE"
+  | "WATCH_POINT"
+  | "HOLD_POINT"
+  | "ESCORT"
+  | "CORE_DEFENSE"
+  | "RALLY"
+  | "ADVANCE"
+  | "ENGAGE"
+  | "WITHDRAW";
+
+export interface RoleMemory {
+  kind: RoleKind;
+  anchor: Position;
+  sinceTick: number;
+}
+
+export interface StrategyMemory {
+  obstacles: Record<string, Position>;
+  explored: Record<string, Position>;
+  workerExplored: Record<string, Position>;
+  resources: Record<string, ResourceObservation>;
+  enemies: Record<string, EnemyObservation>;
+  patrolVisits: Record<string, number>;
+  roles: Record<string, RoleMemory>;
+  posture: Posture;
+  postureSinceTick: number;
+  previousPopulation: number;
+  recentHarvestFailures: number;
+  nearbyResourceDryTicks: number;
+  safeExpansionTicks: number;
+  previousCombatUnitIds: string[];
+  recentCombatLosses: number;
+  militaryPressureTicks: number;
+  militaryCalmTicks: number;
+  /** Sticky per-worker duty-scout deadlines (absolute tick). */
+  workerDutyScoutUntil: Record<string, number>;
+  /** Last worker move, used to break FOW / corridor reverse oscillation. */
+  workerLastMove?: Record<
+    string,
+    { direction: Direction; from: Position; tick: number }
+  >;
+  /** Sticky visible/fog harvest goal while the worker is en route. */
+  workerHarvestGoal?: Record<string, Position>;
+  /** Cells already tried while approaching the current harvest goal. */
+  workerHarvestVisited?: Record<string, { goal: string; cells: string[] }>;
+  /** Committed step queue toward a visible/fog harvest goal. */
+  workerHarvestPath?: Record<
+    string,
+    { goal: string; steps: Direction[]; expect: Position }
+  >;
+  /**
+   * Sticky exploration/scout cell so frontier re-ranking cannot flip the
+   * worker between two vision-rim targets every tick (UP/DOWN orbit).
+   */
+  workerScoutTarget?: Record<
+    string,
+    { position: Position; tick: number; goalKey?: string }
+  >;
+}
+
+export interface DecisionSummary {
+  posture: Posture;
   threatened: boolean;
   retreating: boolean;
+  controlRadius: number;
+  supportResponseTicks: number;
+  reserveCount: number;
+  reserve: number;
+  militaryReady: boolean;
+  minimumCombatCount: number;
+  minimumCombatPower: number;
+  combatCountDeficit: number;
+  combatPowerDeficit: number;
+  targetWorkerShare: number;
+  recentCombatLosses: number;
+  militaryPressureTicks: number;
   actions: Record<string, number>;
   planningMs: number;
 }
 
-export interface StrategyRuntimeStatus {
-  backend: "python_primary";
-  submittedBackend: "python" | "safe_fallback";
-  strategyVersion: string;
-  contractVersion: string;
-  latencyMs?: number;
-  lastSuccessTick?: number;
-  lastError: string | null;
-  fallbackUsed: boolean;
-  consecutiveFailures: number;
-  blocked: boolean;
+export interface PlanResult {
+  plan: CommandPlan;
+  memory: StrategyMemory;
+  summary: DecisionSummary;
 }
