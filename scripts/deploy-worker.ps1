@@ -8,22 +8,36 @@ $PythonWorkerRoot = Join-Path $ProjectRoot 'python-worker'
 $WorkerRoot = Join-Path $ProjectRoot 'worker'
 $env:PYTHONUTF8 = '1'
 
+function Invoke-NativeCommand {
+  param(
+    [Parameter(Mandatory = $true, Position = 0)]
+    [string]$FilePath,
+    [Parameter(ValueFromRemainingArguments = $true)]
+    [string[]]$Arguments
+  )
+
+  & $FilePath @Arguments
+  if ($LASTEXITCODE -ne 0) {
+    throw "Command failed with exit code ${LASTEXITCODE}: $FilePath $($Arguments -join ' ')"
+  }
+}
+
 Push-Location $PythonWorkerRoot
 try {
-  uv sync
-  uv run python sync_shared_core.py
-  uv run python sync_shared_core.py --check
-  uv run pywrangler sync
-  uv run pywrangler deploy --dry-run --config wrangler.jsonc
+  Invoke-NativeCommand uv sync
+  Invoke-NativeCommand uv run python sync_shared_core.py
+  Invoke-NativeCommand uv run python sync_shared_core.py --check
+  Invoke-NativeCommand uv run pywrangler sync
+  Invoke-NativeCommand uv run pywrangler deploy --dry-run --config wrangler.jsonc
 } finally {
   Pop-Location
 }
 
 Push-Location $WorkerRoot
 try {
-  npm ci
-  npm run check
-  npm run deploy:dry-run
+  Invoke-NativeCommand npm ci
+  Invoke-NativeCommand npm run check
+  Invoke-NativeCommand npm run deploy:dry-run
 } finally {
   Pop-Location
 }
@@ -34,15 +48,15 @@ if ($DryRun) {
 
 Push-Location $PythonWorkerRoot
 try {
-  uv run python sync_shared_core.py --check
-  uv run pywrangler deploy --config wrangler.jsonc
+  Invoke-NativeCommand uv run python sync_shared_core.py --check
+  Invoke-NativeCommand uv run pywrangler deploy --config wrangler.jsonc
 } finally {
   Pop-Location
 }
 
 Push-Location $WorkerRoot
 try {
-  npm run deploy
+  Invoke-NativeCommand npm run deploy
 } finally {
   Pop-Location
 }

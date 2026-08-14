@@ -1,10 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import { authorized } from "../src/control";
-import {
-  DIAGNOSTIC_STATE_INSTANCE,
-  PRIMARY_STATE_INSTANCE,
-} from "../src/instances";
+import { DIAGNOSTIC_STATE_INSTANCE } from "../src/instances";
 import { handleRequest } from "../src/router";
 import { DEFAULT_PYTHON_STRATEGY_CONFIG as DEFAULT_CONFIG } from "../src/python-strategy/config";
 

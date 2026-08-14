@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 
-import type { DecisionSummary, StrategyRuntimeStatus } from "../src/contracts";
+import type { StrategyRuntimeStatus } from "../src/contracts";
 import {
   applyStrategyStatusHistory,
   runStrategyBackend,
@@ -39,7 +39,7 @@ function pythonResult(
 }
 
 describe("strategy backend safety", () => {
-  it("never invokes the TypeScript planner when Python primary fails", async () => {
+  it("uses the safe fallback when Python primary fails", async () => {
     const fallback = vi.fn(() => ({
       tick: 7,
       unit_actions: { [IDS.worker1]: { type: "DEPOSIT" as const } },
@@ -70,71 +70,6 @@ describe("strategy backend safety", () => {
 
     expect(outcome.status.submittedBackend).toBe("safe_fallback");
     expect(outcome.pythonMemory).toBeUndefined();
-  });
-
-  it.skip("legacy shadow mode", async () => {
-    const typescriptMemory = emptyMemory();
-    const typescriptPlan = { tick: 9, core_action: { type: "WAIT" as const } };
-
-    const outcome = await runStrategyBackend({
-      backend: "python_shadow",
-      tick: 9,
-      state: currentState,
-      runTypeScript: () => ({
-        plan: typescriptPlan,
-        memory: typescriptMemory,
-        summary: typescriptSummary,
-      }),
-      runPython: () => Promise.reject(new Error("shadow timeout")),
-      validate: () => true,
-      fallback: () => ({ tick: 9 }),
-    });
-
-    expect(outcome.plan).toEqual(typescriptPlan);
-    expect(outcome.typescriptMemory).toBe(typescriptMemory);
-    expect(outcome.pythonMemory).toBeUndefined();
-    expect(outcome.status.submittedBackend).toBe("typescript");
-    expect(outcome.status.lastError).toContain("shadow timeout");
-  });
-
-  it.skip("legacy shadow mode", async () => {
-    const outcome = await runStrategyBackend({
-      backend: "python_shadow",
-      tick: 10,
-      state: currentState,
-      runTypeScript: () => ({
-        plan: { tick: 10 },
-        memory: { ...emptyMemory(), posture: "ECONOMY" },
-        summary: typescriptSummary,
-      }),
-      runPython: () =>
-        Promise.resolve(
-          pythonResult(10, {
-            memory: {
-              version: 12,
-              last_tick: 9,
-              last_posture: "SURVIVAL",
-            },
-            summary: {
-              posture: "SURVIVAL",
-              threatened: true,
-              retreating: true,
-              actions: {},
-              planningMs: 2,
-            },
-          }),
-        ),
-      validate: () => true,
-      fallback: () => ({ tick: 10 }),
-    });
-
-    expect(outcome.status.shadow).toMatchObject({
-      matched: false,
-      unitActionDifferences: 0,
-      coreActionDifferent: false,
-      summaryDifferent: true,
-      memoryMetadataDifferent: true,
-    });
   });
 });
 
@@ -168,53 +103,5 @@ describe("strategy status history", () => {
     expect(second.blocked).toBe(false);
     expect(third.consecutiveFailures).toBe(3);
     expect(third.blocked).toBe(true);
-  });
-
-  it.skip("legacy shadow mode", () => {
-    const current: StrategyRuntimeStatus = {
-      backend: "python_shadow",
-      submittedBackend: "typescript",
-      strategyVersion: "python-economy-v1",
-      contractVersion: "1",
-      lastError: null,
-      fallbackUsed: false,
-      consecutiveFailures: 0,
-      blocked: false,
-      shadow: {
-        matched: false,
-        unitActionDifferences: 2,
-        coreActionDifferent: true,
-        summaryDifferent: true,
-        memoryMetadataDifferent: true,
-      },
-    };
-    const first = applyStrategyStatusHistory(current, undefined, 20, 3);
-    const second = applyStrategyStatusHistory(
-      {
-        ...current,
-        shadow: {
-          matched: true,
-          unitActionDifferences: 0,
-          coreActionDifferent: false,
-          summaryDifferent: false,
-          memoryMetadataDifferent: false,
-        },
-      },
-      first,
-      21,
-      3,
-    );
-
-    expect(second.shadow).toMatchObject({
-      comparedTicks: 2,
-      matchedTicks: 1,
-      mismatchedTicks: 1,
-      cumulativeUnitActionDifferences: 2,
-      cumulativeCoreActionDifferences: 1,
-      cumulativeSummaryDifferences: 1,
-      cumulativeMemoryMetadataDifferences: 1,
-      lastComparedTick: 21,
-      lastDifferenceTick: 20,
-    });
   });
 });
