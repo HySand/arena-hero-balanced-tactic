@@ -1,6 +1,10 @@
 import { authorized, isControlAction } from "./control";
 import { DIAGNOSTIC_STATE_INSTANCE, PRIMARY_STATE_INSTANCE } from "./instances";
-import { CONFIG_SCHEMA } from "./python-strategy/config";
+import {
+  CONFIG_SCHEMA,
+  parsePythonStrategyConfig,
+  type PythonStrategyConfig,
+} from "./python-strategy/config";
 
 const MAX_REQUEST_BYTES = 64 * 1024;
 
@@ -52,7 +56,7 @@ export async function handleRequest(
     });
   }
   if (url.pathname === "/api/status" && request.method === "GET") {
-    return state(env).fetch("https://state.internal/status");
+    return statusResponse(env);
   }
   if (url.pathname === "/api/logs" && request.method === "GET") {
     if (!authorizedRequest(request, env.ADMIN_CONTROL_SECRET)) {
@@ -130,6 +134,47 @@ function diagnostics(env: RequestEnvironment): InternalFetcher {
   return env.STATE.getByName(DIAGNOSTIC_STATE_INSTANCE);
 }
 
+async function statusResponse(env: RequestEnvironment): Promise<Response> {
+  const stateStub = state(env);
+  const response = await stateStub.fetch("https://state.internal/status");
+  if (!response.ok) return response;
+
+  const status = await response.json<unknown>();
+  const configResponse = await stateStub.fetch("https://state.internal/config");
+  if (!configResponse.ok) return Response.json(status);
+
+  try {
+    const config = parsePythonStrategyConfig(await configResponse.json());
+    return Response.json(reconcileDashboardPhase(status, config));
+  } catch {
+    return Response.json(status);
+  }
+}
+
+export function reconcileDashboardPhase(
+  status: unknown,
+  config: PythonStrategyConfig,
+): unknown {
+  if (!isRecord(status)) return status;
+  const population = status.population;
+  if (typeof population !== "number" || !Number.isSafeInteger(population)) {
+    return status;
+  }
+  if (
+    status.strategy_phase !== "LATE" ||
+    !config.pacing.enabled ||
+    population >= config.pacing.mid_population
+  ) {
+    return status;
+  }
+  return {
+    ...status,
+    strategy_phase: "MID",
+    resource_radius: config.pacing.mid_resource_radius,
+    exploration_radius: config.pacing.mid_exploration_radius,
+  };
+}
+
 function authorizedRequest(request: Request, secret: string): boolean {
   return authorized(request.headers.get("Authorization"), secret);
 }
@@ -144,4 +189,8 @@ async function readRequestBody(request: Request): Promise<string | Response> {
     return Response.json({ error: "REQUEST_TOO_LARGE" }, { status: 413 });
   }
   return body;
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
 }

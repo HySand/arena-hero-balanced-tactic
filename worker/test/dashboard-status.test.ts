@@ -4,6 +4,7 @@ import type { StrategyRuntimeStatus } from "../src/contracts";
 import { projectDashboardStatus } from "../src/dashboard-status";
 import { DEFAULT_PYTHON_STRATEGY_CONFIG } from "../src/python-strategy/config";
 import { emptyPythonMemory } from "../src/python-strategy/wire";
+import { reconcileDashboardPhase } from "../src/router";
 import { core, IDS, state, unit } from "./fixtures";
 
 const strategy: StrategyRuntimeStatus = {
@@ -44,5 +45,25 @@ describe("dashboard phase projection", () => {
 
   it("uses the early phase before either readiness gate is met", () => {
     expect(statusAt(2).strategy_phase).toBe("EARLY");
+  });
+
+  it("corrects a late phase from an older State Durable Object", () => {
+    const corrected = reconcileDashboardPhase(
+      {
+        strategy_phase: "LATE",
+        population: 1,
+        resource_radius: 40,
+        exploration_radius: 42,
+      },
+      DEFAULT_PYTHON_STRATEGY_CONFIG,
+    );
+
+    expect(corrected).toMatchObject({
+      strategy_phase: "MID",
+      resource_radius:
+        DEFAULT_PYTHON_STRATEGY_CONFIG.pacing.mid_resource_radius,
+      exploration_radius:
+        DEFAULT_PYTHON_STRATEGY_CONFIG.pacing.mid_exploration_radius,
+    });
   });
 });
