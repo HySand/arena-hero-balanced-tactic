@@ -414,7 +414,8 @@ class TacticMemory:
             if turn.core is not None
             else None
         )
-        if turn.core is None:
+        respawning = getattr(turn, "status", "ACTIVE") == "RESPAWNING" or turn.core is None
+        if respawning:
             self.respawn_reset_pending = True
         elif self.respawn_reset_pending:
             self._reset_for_owner(owner_username)
@@ -4358,7 +4359,7 @@ def choose_actions(
     if config is None:
         config = default_strategy_config()
     memory.observe(turn)
-    if turn.core is None:
+    if getattr(turn, "status", "ACTIVE") == "RESPAWNING" or turn.core is None:
         memory.last_posture = "RESPAWNING"
         memory.last_threat_score = 0.0
         return
@@ -4406,5 +4407,27 @@ def plan_tick(
         "threatened": next_memory.last_threat_score > 0,
         "retreating": next_memory.last_posture == POSTURE_SURVIVAL,
         "actions": dict(sorted(actions.items())),
+        "strategy_phase": (
+            "RESPAWNING"
+            if getattr(state, "status", "ACTIVE") == "RESPAWNING"
+            else _strategy_phase(state, next_memory, config)
+        ),
+        "resource_radius": (
+            None
+            if getattr(state, "status", "ACTIVE") == "RESPAWNING"
+            else _resource_radius(state, next_memory, config)
+        ),
+        "exploration_radius": (
+            0
+            if getattr(state, "status", "ACTIVE") == "RESPAWNING"
+            else _exploration_radius(state, next_memory, config)
+        ),
+        "offense_ready": (
+            False
+            if getattr(state, "status", "ACTIVE") == "RESPAWNING"
+            else _offense_ready(state, next_memory, config)
+        ),
+        "resource_space": state.resource_space,
+        "resource_capacity": state.resources + state.resource_space,
     }
     return PlanResult(plan=plan, memory=next_memory.to_dict(), summary=summary)

@@ -7,7 +7,6 @@ export type PythonStrategyConfig = typeof defaultConfig;
 export const CONFIG_SCHEMA = {
   version: PYTHON_CONFIG_VERSION,
   unit_types: ["WORKER", "VANGUARD", "RANGER"],
-  unit_costs: { WORKER: 5, VANGUARD: 10, RANGER: 12 },
   after_plan_modes: ["adaptive", "hold"],
   defaults: defaultConfig,
   limits: {

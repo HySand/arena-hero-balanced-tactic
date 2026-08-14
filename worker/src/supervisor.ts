@@ -282,8 +282,11 @@ export class ArenaHeroAgent extends DurableObject<Env> {
       objects: state.objects.length,
       events: state.events.length,
     });
-    const existing =
-      await this.ctx.storage.get<StoredSubmission>("lastSubmission");
+    const respawning = state.status === "RESPAWNING";
+    if (respawning) await this.resetPythonStrategyLifecycle();
+    const existing = respawning
+      ? undefined
+      : await this.ctx.storage.get<StoredSubmission>("lastSubmission");
     if (existing?.tick === tick) {
       structuredLog("plan_replay", { tick });
       this.dispatchSubmission(existing);
@@ -354,7 +357,7 @@ export class ArenaHeroAgent extends DurableObject<Env> {
       ? await encodeJsonGzip(outcome.pythonMemory)
       : undefined;
     await this.ctx.storage.put({
-      lastSubmission: submission,
+      ...(respawning ? {} : { lastSubmission: submission }),
       strategyRuntimeStatus: strategyStatus,
       ...(compressedPythonMemory === undefined
         ? {}
@@ -401,6 +404,15 @@ export class ArenaHeroAgent extends DurableObject<Env> {
       planningMs: summary ? Math.round(summary.planningMs) : undefined,
       actions: summary?.actions ?? {},
     });
+  }
+
+  private async resetPythonStrategyLifecycle(): Promise<void> {
+    this.pythonStrategyMemory = emptyPythonMemory();
+    await Promise.all([
+      this.ctx.storage.delete("lastSubmission"),
+      this.ctx.storage.delete("pythonStrategyMemoryGzip"),
+      this.ctx.storage.delete("pythonStrategyMemory"),
+    ]);
   }
 
   private async applyManualControls(

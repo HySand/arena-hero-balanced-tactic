@@ -42,16 +42,12 @@ export function projectDashboardStatus(
   const core = controlledCore(input.state.objects);
   const units = controlledUnits(input.state.objects);
   const counts = unitCounts(units);
-  const phase = dashboardPhase(
-    input.tick,
-    units.length,
-    input.memory,
-    input.config,
-  );
-  const resourceSpace = Math.max(
-    0,
-    Math.max(10, input.state.population * 5) - input.state.resources,
-  );
+  const summary = input.summary;
+  const strategyPhase = summary?.strategyPhase ?? "UNKNOWN";
+  const resourceRadius = summary?.resourceRadius ?? null;
+  const explorationRadius = summary?.explorationRadius ?? null;
+  const offenseReady = summary?.offenseReady ?? false;
+  const resourceSpace = summary?.resourceSpace ?? null;
   const visibleResources = input.state.objects
     .filter((object): object is TerrainObject => object.kind === "RESOURCE")
     .flatMap((object) => object.positions.map(positionDocument));
@@ -77,11 +73,11 @@ export function projectDashboardStatus(
     configUpdatedAt: input.configUpdatedAt,
     backend: input.strategy.backend,
     strategy: input.strategy,
-    summary: input.summary,
+    summary,
     connection: input.connection,
     profile: "economy",
-    strategy_phase: phase,
-    resource_radius: resourceRadius(phase, input.config),
+    strategy_phase: strategyPhase,
+    resource_radius: resourceRadius,
     resource_radius_limit: numberAt(input.memory, "resource_radius_limit"),
     effective_resource_radius: numberAt(
       input.memory,
@@ -95,15 +91,15 @@ export function projectDashboardStatus(
       input.memory,
       "resource_assignment_count",
     ),
-    exploration_radius: explorationRadius(phase, input.config),
-    offense_ready: offenseReady(input.tick, input.memory, input.config, counts),
+    exploration_radius: explorationRadius,
+    offense_ready: offenseReady,
     posture:
       input.summary?.posture ??
       stringAt(input.memory, "last_posture") ??
       "UNKNOWN",
     threat_score: rounded(numberAt(input.memory, "last_threat_score") ?? 0, 3),
     resources: input.state.resources,
-    resource_capacity: input.state.resources + resourceSpace,
+    resource_capacity: summary?.resourceCapacity ?? null,
     resource_space: resourceSpace,
     population: input.state.population,
     counts,
@@ -257,66 +253,6 @@ function unitCounts(units: readonly UnitObject[]): Record<string, number> {
   const counts = { WORKER: 0, VANGUARD: 0, RANGER: 0 };
   for (const unit of units) counts[unit.unit_type] += 1;
   return counts;
-}
-
-function dashboardPhase(
-  tick: number,
-  population: number,
-  memory: PythonStrategyMemory,
-  config: PythonStrategyConfig,
-): "EARLY" | "MID" | "LATE" {
-  if (!config.pacing.enabled) return "LATE";
-  const firstTick = numberAt(memory, "first_tick") ?? tick;
-  const elapsed = Math.max(0, tick - firstTick);
-  if (
-    elapsed < config.pacing.early_ticks ||
-    population < config.pacing.early_population
-  ) {
-    return "EARLY";
-  }
-  if (
-    elapsed < config.pacing.mid_ticks ||
-    population < config.pacing.mid_population
-  ) {
-    return "MID";
-  }
-  return "LATE";
-}
-
-function resourceRadius(
-  phase: "EARLY" | "MID" | "LATE",
-  config: PythonStrategyConfig,
-): number {
-  if (phase === "EARLY") return config.pacing.early_resource_radius;
-  if (phase === "MID") return config.pacing.mid_resource_radius;
-  return config.pacing.late_resource_radius;
-}
-
-function explorationRadius(
-  phase: "EARLY" | "MID" | "LATE",
-  config: PythonStrategyConfig,
-): number {
-  if (phase === "EARLY") return config.pacing.early_exploration_radius;
-  if (phase === "MID") return config.pacing.mid_exploration_radius;
-  return config.pacing.late_exploration_radius;
-}
-
-function offenseReady(
-  tick: number,
-  memory: PythonStrategyMemory,
-  config: PythonStrategyConfig,
-  counts: Record<string, number>,
-): boolean {
-  const firstTick = numberAt(memory, "first_tick") ?? tick;
-  const elapsed = Math.max(0, tick - firstTick);
-  return (
-    config.pacing.offense_enabled &&
-    elapsed >= config.pacing.offense_after_ticks &&
-    (counts.VANGUARD ?? 0) >= config.pacing.offense_min_vanguards &&
-    (counts.RANGER ?? 0) >= config.pacing.offense_min_rangers &&
-    (counts.VANGUARD ?? 0) + (counts.RANGER ?? 0) >=
-      config.pacing.offense_min_defenders
-  );
 }
 
 function adaptiveEconomyDocument(

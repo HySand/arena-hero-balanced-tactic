@@ -55,8 +55,6 @@ export interface PlayerState {
   respawn_at_tick?: number;
   resources: number;
   population: number;
-  population_tier: number;
-  upkeep_next_tick: number;
   champion_beacon: ChampionBeacon;
   objects: WorldObject[];
   events: Array<Record<string, unknown>>;
@@ -115,6 +113,12 @@ export interface StrategyStatusSummary {
   retreating: boolean;
   actions: Record<string, number>;
   planningMs: number;
+  strategyPhase?: "EARLY" | "MID" | "LATE" | "RESPAWNING";
+  resourceRadius?: number | null;
+  explorationRadius?: number;
+  offenseReady?: boolean;
+  resourceSpace?: number;
+  resourceCapacity?: number;
 }
 
 export interface StrategyRuntimeStatus {

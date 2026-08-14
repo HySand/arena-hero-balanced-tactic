@@ -1,10 +1,6 @@
 import { authorized, isControlAction } from "./control";
 import { DIAGNOSTIC_STATE_INSTANCE, PRIMARY_STATE_INSTANCE } from "./instances";
-import {
-  CONFIG_SCHEMA,
-  parsePythonStrategyConfig,
-  type PythonStrategyConfig,
-} from "./python-strategy/config";
+import { CONFIG_SCHEMA } from "./python-strategy/config";
 
 const MAX_REQUEST_BYTES = 64 * 1024;
 
@@ -138,53 +134,7 @@ async function statusResponse(env: RequestEnvironment): Promise<Response> {
   const stateStub = state(env);
   const response = await stateStub.fetch("https://state.internal/status");
   if (!response.ok) return response;
-
-  const status = await response.json<unknown>();
-  const configResponse = await stateStub.fetch("https://state.internal/config");
-  if (!configResponse.ok) return Response.json(status);
-
-  try {
-    const config = parsePythonStrategyConfig(await configResponse.json());
-    return Response.json(reconcileDashboardPhase(status, config));
-  } catch {
-    return Response.json(status);
-  }
-}
-
-export function reconcileDashboardPhase(
-  status: unknown,
-  config: PythonStrategyConfig,
-): unknown {
-  if (!isRecord(status)) return status;
-  const population = status.population;
-  if (typeof population !== "number" || !Number.isSafeInteger(population)) {
-    return status;
-  }
-  if (
-    config.pacing.enabled &&
-    population < config.pacing.early_population &&
-    status.strategy_phase !== "EARLY"
-  ) {
-    return {
-      ...status,
-      strategy_phase: "EARLY",
-      resource_radius: config.pacing.early_resource_radius,
-      exploration_radius: config.pacing.early_exploration_radius,
-    };
-  }
-  if (
-    status.strategy_phase !== "LATE" ||
-    !config.pacing.enabled ||
-    population >= config.pacing.mid_population
-  ) {
-    return status;
-  }
-  return {
-    ...status,
-    strategy_phase: "MID",
-    resource_radius: config.pacing.mid_resource_radius,
-    exploration_radius: config.pacing.mid_exploration_radius,
-  };
+  return response;
 }
 
 function authorizedRequest(request: Request, secret: string): boolean {
@@ -201,8 +151,4 @@ async function readRequestBody(request: Request): Promise<string | Response> {
     return Response.json({ error: "REQUEST_TOO_LARGE" }, { status: 413 });
   }
   return body;
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
 }

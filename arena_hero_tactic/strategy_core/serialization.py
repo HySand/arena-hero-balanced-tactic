@@ -23,6 +23,7 @@ from .model import (
     Turn,
     Unit,
     UnitType,
+    unit_cost,
 )
 
 CONFIG_VERSION = 1
@@ -236,17 +237,27 @@ def _state(data: Mapping[str, Any], tick: int, options: PlannerOptions) -> Turn:
             enemies.append(Enemy(identifier, "UNIT", position, hp, unit_type=unit_type))
     beacon_data = _record(data.get("champion_beacon"), "state.champion_beacon")
     raw_beacon_status = beacon_data.get("status")
-    unit_costs_data = _record(data.get("unit_costs"), "state.unit_costs")
-    unit_costs = {
-        unit_type: _integer(unit_costs_data.get(unit_type.value), f"state.unit_costs.{unit_type.value}")
-        for unit_type in UnitType
-    }
+    population = _integer(data.get("population"), "state.population")
+    stored_resources = _integer(data.get("resources"), "state.resources")
+    raw_respawn_at_tick = data.get("respawn_at_tick")
+    respawn_at_tick: int | None = None
+    if status == "RESPAWNING":
+        respawn_at_tick = _integer(
+            raw_respawn_at_tick,
+            "state.respawn_at_tick",
+            1,
+        )
+    elif raw_respawn_at_tick is not None:
+        raise ContractError(
+            "state.respawn_at_tick is only valid while respawning"
+        )
+    resource_capacity = max(10, population * 5)
     return Turn(
         tick=tick,
         core=core,
         units=tuple(units),
-        resources=_integer(data.get("resources"), "state.resources"),
-        resource_space=_integer(data.get("resource_space"), "state.resource_space"),
+        resources=stored_resources,
+        resource_space=max(0, resource_capacity - stored_resources),
         resource_cells=frozenset(resources),
         obstacle_cells=frozenset(obstacles),
         visible_enemies=tuple(enemies),
@@ -262,9 +273,14 @@ def _state(data: Mapping[str, Any], tick: int, options: PlannerOptions) -> Turn:
                 beacon_data.get("carrier_id"), "state.champion_beacon.carrier_id"
             ),
         ),
-        population=_integer(data.get("population"), "state.population"),
-        unit_costs=unit_costs,
+        population=population,
+        unit_costs={
+            unit_type: unit_cost(unit_type, population)
+            for unit_type in UnitType
+        },
         options=options,
+        status=status,
+        respawn_at_tick=respawn_at_tick,
     )
 
 

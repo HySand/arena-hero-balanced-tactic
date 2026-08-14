@@ -259,6 +259,8 @@ class Turn:
     options: PlannerOptions = field(default_factory=PlannerOptions)
     width: int | None = None
     height: int | None = None
+    status: str = "ACTIVE"
+    respawn_at_tick: int | None = None
     workers: tuple[Unit, ...] = field(init=False)
     vanguards: tuple[Unit, ...] = field(init=False)
     rangers: tuple[Unit, ...] = field(init=False)

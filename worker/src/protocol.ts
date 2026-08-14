@@ -151,22 +151,28 @@ function playerState(value: unknown): PlayerState | undefined {
     return undefined;
 
   const population = data.population as number;
-  const populationTier = Math.floor(population / 20);
-  const upkeepNextTick = (populationTier * (populationTier + 1)) / 2;
+  const respawnAtTick = data.respawn_at_tick;
+  if (
+    data.status === "RESPAWNING" &&
+    (!Number.isSafeInteger(respawnAtTick) || (respawnAtTick as number) < 1)
+  ) {
+    return undefined;
+  }
+  if (data.status === "ACTIVE" && respawnAtTick !== undefined) {
+    return undefined;
+  }
   const state: PlayerState = {
     status: data.status,
     resources: data.resources as number,
     population,
-    population_tier: populationTier,
-    upkeep_next_tick: upkeepNextTick,
     champion_beacon: { position: beaconPosition },
     objects: decodedObjects,
     events: data.events.filter(
       (event): event is Record<string, unknown> => object(event) !== undefined,
     ),
   };
-  if (Number.isInteger(data.respawn_at_tick))
-    state.respawn_at_tick = data.respawn_at_tick as number;
+  if (data.status === "RESPAWNING")
+    state.respawn_at_tick = respawnAtTick as number;
   if (beacon.status === "GROUND" || beacon.status === "CARRIED") {
     state.champion_beacon.status = beacon.status;
   }

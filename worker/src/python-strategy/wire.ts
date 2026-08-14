@@ -5,7 +5,6 @@ import type {
   Position,
   StrategyStatusSummary,
   UnitAction,
-  UnitType,
 } from "../contracts";
 import {
   DEFAULT_PYTHON_STRATEGY_CONFIG,
@@ -28,7 +27,7 @@ export interface PythonStrategyRequest {
   config_version: typeof PYTHON_CONFIG_VERSION;
   agent_id: string;
   tick: number;
-  state: PythonStrategyState;
+  state: PlayerState;
   memory: PythonStrategyMemory;
   config: PythonStrategyConfig;
   options: {
@@ -36,11 +35,6 @@ export interface PythonStrategyRequest {
     safety_enabled: boolean;
     core_migration_enabled: boolean;
   };
-}
-
-export interface PythonStrategyState extends PlayerState {
-  resource_space: number;
-  unit_costs: Record<UnitType, number>;
 }
 
 export interface PythonStrategyResult {
@@ -77,14 +71,6 @@ export function isPythonStrategyMemory(
   return isRecord(value) && value.version === PYTHON_MEMORY_VERSION;
 }
 
-function unitCost(unitType: UnitType, population: number): number {
-  const base = { WORKER: 5, VANGUARD: 10, RANGER: 12 }[unitType];
-  const exponent = population < 20 ? 0 : Math.floor((population - 20) / 5) + 1;
-  const numerator = base * 13 ** exponent;
-  const denominator = 10 ** exponent;
-  return Math.floor((2 * numerator + denominator) / (2 * denominator));
-}
-
 export function buildPythonStrategyRequest(
   agentId: string,
   tick: number,
@@ -92,22 +78,13 @@ export function buildPythonStrategyRequest(
   memory: PythonStrategyMemory,
   config: PythonStrategyConfig = DEFAULT_PYTHON_STRATEGY_CONFIG,
 ): PythonStrategyRequest {
-  const capacity = Math.max(10, state.population * 5);
   return {
     contract_version: PYTHON_CONTRACT_VERSION,
     strategy_version: PYTHON_STRATEGY_VERSION,
     config_version: PYTHON_CONFIG_VERSION,
     agent_id: agentId,
     tick,
-    state: {
-      ...state,
-      resource_space: Math.max(0, capacity - state.resources),
-      unit_costs: {
-        WORKER: unitCost("WORKER", state.population),
-        VANGUARD: unitCost("VANGUARD", state.population),
-        RANGER: unitCost("RANGER", state.population),
-      },
-    },
+    state,
     memory,
     config,
     options: {
@@ -240,7 +217,71 @@ function decodeSummary(
     retreating: data.retreating,
     actions,
     planningMs,
+    ...(data.strategy_phase === undefined
+      ? {}
+      : { strategyPhase: strategyPhase(data.strategy_phase) }),
+    ...(data.resource_radius === undefined
+      ? {}
+      : {
+          resourceRadius: nullableFiniteNumber(
+            data.resource_radius,
+            "summary.resource_radius",
+          ),
+        }),
+    ...(data.exploration_radius === undefined
+      ? {}
+      : {
+          explorationRadius: finiteNumber(
+            data.exploration_radius,
+            "summary.exploration_radius",
+            0,
+          ),
+        }),
+    ...(data.offense_ready === undefined
+      ? {}
+      : { offenseReady: boolean(data.offense_ready, "summary.offense_ready") }),
+    ...(data.resource_space === undefined
+      ? {}
+      : {
+          resourceSpace: finiteNumber(
+            data.resource_space,
+            "summary.resource_space",
+            0,
+          ),
+        }),
+    ...(data.resource_capacity === undefined
+      ? {}
+      : {
+          resourceCapacity: finiteNumber(
+            data.resource_capacity,
+            "summary.resource_capacity",
+            0,
+          ),
+        }),
   };
+}
+
+function strategyPhase(
+  value: unknown,
+): "EARLY" | "MID" | "LATE" | "RESPAWNING" {
+  if (
+    value !== "EARLY" &&
+    value !== "MID" &&
+    value !== "LATE" &&
+    value !== "RESPAWNING"
+  ) {
+    throw contractError("summary.strategy_phase is invalid");
+  }
+  return value;
+}
+
+function nullableFiniteNumber(value: unknown, name: string): number | null {
+  return value === null ? null : finiteNumber(value, name, 0);
+}
+
+function boolean(value: unknown, name: string): boolean {
+  if (typeof value !== "boolean") throw contractError(`${name} is invalid`);
+  return value;
 }
 
 function decodePlan(value: unknown, tick: number): CommandPlan {

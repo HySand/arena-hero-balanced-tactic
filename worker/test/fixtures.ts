@@ -63,8 +63,6 @@ export function state(
     status: "ACTIVE",
     resources: 5,
     population,
-    population_tier: Math.floor(population / 20),
-    upkeep_next_tick: population >= 20 ? 1 : 0,
     champion_beacon: { position: [20, 20] },
     objects,
     events: [],

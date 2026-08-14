@@ -126,6 +126,8 @@ def sdk_turn_to_canonical(
     population = getattr(state, "population", None)
     if not isinstance(population, int):
         population = len(units)
+    raw_player_status = getattr(state, "status", "ACTIVE")
+    player_status = getattr(raw_player_status, "value", raw_player_status)
     return Turn(
         tick=int(getattr(turn, "tick")),
         core=core,
@@ -156,5 +158,9 @@ def sdk_turn_to_canonical(
         ),
         height=_optional_int(
             getattr(turn, "height", None) or getattr(turn, "map_height", None)
+        ),
+        status=str(player_status),
+        respawn_at_tick=_optional_int(
+            getattr(state, "respawn_at_tick", None)
         ),
     )

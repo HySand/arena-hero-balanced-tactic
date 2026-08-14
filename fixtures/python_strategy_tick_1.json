@@ -611,6 +611,7 @@
       "last_posture": "ECONOMY",
       "last_threat_score": 0.0,
       "last_tick": 1,
+      "respawn_reset_pending": false,
       "last_worker_loss_tick": null,
       "living_worker_ids": [],
       "obstacle_cells": [],
@@ -653,8 +654,14 @@
       "actions": {
         "SPAWN": 1
       },
+      "exploration_radius": 12,
+      "offense_ready": false,
       "posture": "ECONOMY",
+      "resource_capacity": 10,
+      "resource_radius": 10,
+      "resource_space": 5,
       "retreating": false,
+      "strategy_phase": "EARLY",
       "threatened": false
     }
   },
@@ -792,16 +799,8 @@
         }
       ],
       "population": 0,
-      "population_tier": 0,
-      "resource_space": 5,
       "resources": 5,
-      "status": "ACTIVE",
-      "unit_costs": {
-        "RANGER": 12,
-        "VANGUARD": 10,
-        "WORKER": 5
-      },
-      "upkeep_next_tick": 0
+      "status": "ACTIVE"
     },
     "strategy_version": "python-economy-v1",
     "tick": 1

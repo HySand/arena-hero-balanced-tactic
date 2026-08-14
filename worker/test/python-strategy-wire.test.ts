@@ -30,7 +30,18 @@ const sharedFixture = JSON.parse(
   expected: {
     plan: PythonStrategyResult["plan"];
     memory: PythonStrategyMemory;
-    summary: Omit<PythonStrategyResult["summary"], "planningMs">;
+    summary: {
+      posture: PythonStrategyResult["summary"]["posture"];
+      threatened: boolean;
+      retreating: boolean;
+      actions: Record<string, number>;
+      strategy_phase: "EARLY" | "MID" | "LATE" | "RESPAWNING";
+      resource_radius: number | null;
+      exploration_radius: number;
+      offense_ready: boolean;
+      resource_space: number;
+      resource_capacity: number;
+    };
   };
 };
 
@@ -62,13 +73,23 @@ describe("Python strategy wire contract", () => {
 
     expect(decoded.plan).toEqual(sharedFixture.expected.plan);
     expect(decoded.memory).toEqual(sharedFixture.expected.memory);
+    const expectedSummary = sharedFixture.expected.summary;
     expect(decoded.summary).toEqual({
-      ...sharedFixture.expected.summary,
+      posture: expectedSummary.posture,
+      threatened: expectedSummary.threatened,
+      retreating: expectedSummary.retreating,
+      actions: expectedSummary.actions,
       planningMs: 0,
+      strategyPhase: expectedSummary.strategy_phase,
+      resourceRadius: expectedSummary.resource_radius,
+      explorationRadius: expectedSummary.exploration_radius,
+      offenseReady: expectedSummary.offense_ready,
+      resourceSpace: expectedSummary.resource_space,
+      resourceCapacity: expectedSummary.resource_capacity,
     });
   });
 
-  it("derives the same capacity and dynamic costs as the Python SDK", () => {
+  it("forwards Arena state without deriving Python strategy inputs", () => {
     const request = buildPythonStrategyRequest(
       "arena-hero-primary",
       4,
@@ -76,12 +97,11 @@ describe("Python strategy wire contract", () => {
       emptyPythonMemory(),
     );
 
-    expect(request.state.resource_space).toBe(93);
-    expect(request.state.unit_costs).toEqual({
-      WORKER: 7,
-      VANGUARD: 13,
-      RANGER: 16,
-    });
+    expect(request.state).toEqual(
+      state([core()], { resources: 7, population: 20 }),
+    );
+    expect(request.state).not.toHaveProperty("resource_space");
+    expect(request.state).not.toHaveProperty("unit_costs");
   });
 
   it("accepts cell-only shots, heals, and Core self destruction", () => {

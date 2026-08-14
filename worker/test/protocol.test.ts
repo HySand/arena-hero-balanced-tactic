@@ -50,8 +50,6 @@ describe("protocol decoder", () => {
     if (decoded?.type === "state") {
       expect(decoded.data.objects).toHaveLength(3);
       expect(decoded.data.champion_beacon.position).toEqual([0, 0]);
-      expect(decoded.data.population_tier).toBe(0);
-      expect(decoded.data.upkeep_next_tick).toBe(0);
     }
   });
 
@@ -86,14 +84,15 @@ describe("protocol decoder", () => {
     });
   });
 
-  it("derives upkeep fields from the current SDK state contract", () => {
+  it("forwards a valid respawning state and its authoritative target Tick", () => {
     const decoded = decodeGameMessage(
       JSON.stringify({
         type: "state",
         data: {
-          status: "ACTIVE",
-          resources: 5,
-          population: 41,
+          status: "RESPAWNING",
+          respawn_at_tick: 44,
+          resources: 0,
+          population: 0,
           champion_beacon: { position: [0, 0] },
           objects: [],
           events: [],
@@ -103,12 +102,34 @@ describe("protocol decoder", () => {
 
     expect(decoded).toMatchObject({
       type: "state",
-      data: {
-        population: 41,
-        population_tier: 2,
-        upkeep_next_tick: 3,
-      },
+      data: { status: "RESPAWNING", respawn_at_tick: 44 },
     });
+  });
+
+  it("rejects inconsistent respawn lifecycle fields", () => {
+    const base = {
+      resources: 0,
+      population: 0,
+      champion_beacon: { position: [0, 0] },
+      objects: [],
+      events: [],
+    };
+    expect(
+      decodeGameMessage(
+        JSON.stringify({
+          type: "state",
+          data: { ...base, status: "RESPAWNING" },
+        }),
+      ),
+    ).toBeUndefined();
+    expect(
+      decodeGameMessage(
+        JSON.stringify({
+          type: "state",
+          data: { ...base, status: "ACTIVE", respawn_at_tick: 44 },
+        }),
+      ),
+    ).toBeUndefined();
   });
 
   it("rejects malformed or unsupported messages", () => {
