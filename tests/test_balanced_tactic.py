@@ -830,6 +830,19 @@ class BalancedTacticTests(unittest.TestCase):
         self.assertEqual(_resource_radius(turn, memory, config), 10)
         self.assertEqual(memory.worker_targets[worker.id], (4, 0))
 
+    def test_low_population_returns_to_early_phase_after_many_ticks(self) -> None:
+        worker = FakeUnit(1, (0, 0), UnitType.WORKER)
+        memory = TacticMemory(first_tick=1, last_tick=500)
+        config = strategy_config_from_dict(default_config_dict())
+        turn = FakeTurn(
+            tick=500,
+            core=FakeCore(position=(0, 0)),
+            units=[worker],
+        )
+
+        self.assertEqual(_strategy_phase(turn, memory, config), PHASE_EARLY)
+        self.assertEqual(_resource_radius(turn, memory, config), 10)
+
     def test_population_and_time_expand_resource_radius(self) -> None:
         workers = [
             FakeUnit(index + 1, (0, index), UnitType.WORKER)

@@ -269,7 +269,7 @@ function dashboardPhase(
   const firstTick = numberAt(memory, "first_tick") ?? tick;
   const elapsed = Math.max(0, tick - firstTick);
   if (
-    elapsed < config.pacing.early_ticks &&
+    elapsed < config.pacing.early_ticks ||
     population < config.pacing.early_population
   ) {
     return "EARLY";

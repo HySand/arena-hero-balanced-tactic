@@ -34,12 +34,12 @@ function statusAt(tick: number) {
 }
 
 describe("dashboard phase projection", () => {
-  it("keeps a low-population economy in the mid phase after the tick threshold", () => {
+  it("keeps a low-population economy in the early phase after the tick threshold", () => {
     const status = statusAt(500);
 
-    expect(status.strategy_phase).toBe("MID");
+    expect(status.strategy_phase).toBe("EARLY");
     expect(status.resource_radius).toBe(
-      DEFAULT_PYTHON_STRATEGY_CONFIG.pacing.mid_resource_radius,
+      DEFAULT_PYTHON_STRATEGY_CONFIG.pacing.early_resource_radius,
     );
   });
 
@@ -47,7 +47,7 @@ describe("dashboard phase projection", () => {
     expect(statusAt(2).strategy_phase).toBe("EARLY");
   });
 
-  it("corrects a late phase from an older State Durable Object", () => {
+  it("corrects an advanced phase from an older State Durable Object", () => {
     const corrected = reconcileDashboardPhase(
       {
         strategy_phase: "LATE",
@@ -59,11 +59,11 @@ describe("dashboard phase projection", () => {
     );
 
     expect(corrected).toMatchObject({
-      strategy_phase: "MID",
+      strategy_phase: "EARLY",
       resource_radius:
-        DEFAULT_PYTHON_STRATEGY_CONFIG.pacing.mid_resource_radius,
+        DEFAULT_PYTHON_STRATEGY_CONFIG.pacing.early_resource_radius,
       exploration_radius:
-        DEFAULT_PYTHON_STRATEGY_CONFIG.pacing.mid_exploration_radius,
+        DEFAULT_PYTHON_STRATEGY_CONFIG.pacing.early_exploration_radius,
     });
   });
 });

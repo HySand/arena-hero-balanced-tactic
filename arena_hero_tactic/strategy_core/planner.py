@@ -3217,11 +3217,11 @@ def _elapsed_ticks(turn: Turn, memory: TacticMemory) -> int:
 
 
 def _strategy_phase(turn: Turn, memory: TacticMemory, config: StrategyConfig) -> str:
-    """Choose a monotonic economy phase from time and population readiness.
+    """Choose an economy phase from the current time and population readiness.
 
-    The early phase ends when either enough time has passed or enough population
-    has been built. The late phase requires both the time and population gates,
-    so an economy cannot launch a broad offensive just because the clock is old.
+    Each phase requires both its elapsed-time and population gates. A damaged
+    economy therefore returns to the early phase instead of expanding solely
+    because the match has already run for many ticks.
     """
     if not config.pacing.enabled:
         return PHASE_LATE
@@ -3229,7 +3229,7 @@ def _strategy_phase(turn: Turn, memory: TacticMemory, config: StrategyConfig) ->
     population = len(turn.units)
     if (
         elapsed < config.pacing.early_ticks
-        and population < config.pacing.early_population
+        or population < config.pacing.early_population
     ):
         return PHASE_EARLY
     if (

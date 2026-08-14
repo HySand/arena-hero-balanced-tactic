@@ -161,6 +161,18 @@ export function reconcileDashboardPhase(
     return status;
   }
   if (
+    config.pacing.enabled &&
+    population < config.pacing.early_population &&
+    status.strategy_phase !== "EARLY"
+  ) {
+    return {
+      ...status,
+      strategy_phase: "EARLY",
+      resource_radius: config.pacing.early_resource_radius,
+      exploration_radius: config.pacing.early_exploration_radius,
+    };
+  }
+  if (
     status.strategy_phase !== "LATE" ||
     !config.pacing.enabled ||
     population >= config.pacing.mid_population
