@@ -172,14 +172,14 @@ docker compose up --build -d
 
 容器把运行状态和训练数据统一写入 `/data` 命名卷。Linux systemd 说明见 [deploy/README.md](deploy/README.md)。
 
-Cloudflare 免费方案只部署 `worker/`。该 Worker 同时承载 WebSocket 兼容层、Durable Objects、TypeScript 策略和 `dashboard/` 静态资源：
+Cloudflare 免费方案由 `python-worker/` 策略服务和 `worker/` TypeScript 兼容层组成。统一脚本会先检查两个项目，再按 Python Worker → TypeScript Worker 的顺序部署：
 
 ```powershell
 ./scripts/deploy-worker.ps1 -DryRun
 ./scripts/deploy-worker.ps1
 ```
 
-macOS/Linux 使用 `./scripts/deploy-worker.sh --dry-run` 和 `./scripts/deploy-worker.sh`。完整配置和 Secrets 见 [worker/README.md](worker/README.md)。Cloudflare Git 集成只需将构建根目录设为 `worker`。
+macOS/Linux 使用 `./scripts/deploy-worker.sh --dry-run` 和 `./scripts/deploy-worker.sh`。完整配置、Secrets、Shadow 切换和回滚流程见 [worker/README.md](worker/README.md)。Cloudflare Git 集成需要分别配置 Python 和 TypeScript 两个构建，不能只把根目录设为 `worker`。
 
 ## 安全与兼容性
 

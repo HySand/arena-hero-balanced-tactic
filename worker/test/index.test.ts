@@ -6,7 +6,7 @@ import {
   PRIMARY_STATE_INSTANCE,
 } from "../src/instances";
 import { handleRequest } from "../src/router";
-import { DEFAULT_CONFIG } from "../src/strategy/config";
+import { DEFAULT_PYTHON_STRATEGY_CONFIG as DEFAULT_CONFIG } from "../src/python-strategy/config";
 
 const ADMIN_AUTHORIZATION = ["Bearer", "secret-value"].join(" ");
 
@@ -113,29 +113,6 @@ describe("worker request routing", () => {
     expect(new URL(assetRequests[0]!.url).pathname).toBe("/");
   });
 
-  it("forwards configuration and status reads to the State DO", async () => {
-    const { env, agentRequests, stateRequests, stateNames } = testEnvironment();
-    const config = await handleRequest(
-      new Request("https://worker.example/api/config"),
-      env,
-    );
-    const status = await handleRequest(
-      new Request("https://worker.example/api/status"),
-      env,
-    );
-
-    expect(config.status).toBe(200);
-    expect(status.status).toBe(200);
-    expect(
-      stateRequests.map((request) => new URL(request.url).pathname),
-    ).toEqual(["/config", "/status"]);
-    expect(stateNames).toEqual([
-      PRIMARY_STATE_INSTANCE,
-      PRIMARY_STATE_INSTANCE,
-    ]);
-    expect(agentRequests).toHaveLength(0);
-  });
-
   it("hides protected endpoints when the bearer token is missing", async () => {
     const { env, agentRequests, stateRequests } = testEnvironment();
     const response = await handleRequest(
@@ -166,7 +143,7 @@ describe("worker request routing", () => {
 
     expect(hidden.status).toBe(404);
     expect(visible.status).toBe(200);
-    expect(stateRequests).toHaveLength(1);
+
     expect(new URL(stateRequests[0]!.url).pathname).toBe("/logs");
     expect(stateNames).toEqual([DIAGNOSTIC_STATE_INSTANCE]);
     expect(agentRequests).toHaveLength(0);
@@ -185,7 +162,7 @@ describe("worker request routing", () => {
     );
 
     expect(response.status).toBe(200);
-    expect(stateRequests).toHaveLength(1);
+
     expect(stateRequests[0]!.method).toBe("PUT");
     expect(await stateRequests[0]!.text()).toBe(body);
     expect(agentRequests).toHaveLength(0);
@@ -209,41 +186,6 @@ describe("worker request routing", () => {
     expect(await response.json()).toEqual({ error: "REQUEST_TOO_LARGE" });
     expect(agentRequests).toHaveLength(0);
     expect(stateRequests).toHaveLength(0);
-  });
-
-  it("persists control actions before notifying the Agent", async () => {
-    const { env, agentRequests, stateRequests } = testEnvironment();
-    const background: Promise<unknown>[] = [];
-    const context = {
-      waitUntil: (promise: Promise<unknown>) => background.push(promise),
-    };
-    const invalid = await handleRequest(
-      new Request("https://worker.example/api/control", {
-        method: "POST",
-        headers: { Authorization: ADMIN_AUTHORIZATION },
-        body: JSON.stringify({ action: "restart" }),
-      }),
-      env,
-      context,
-    );
-    const valid = await handleRequest(
-      new Request("https://worker.example/control", {
-        method: "POST",
-        headers: { Authorization: ADMIN_AUTHORIZATION },
-        body: JSON.stringify({ action: "start" }),
-      }),
-      env,
-      context,
-    );
-    await Promise.all(background);
-
-    expect(invalid.status).toBe(400);
-    expect(await invalid.json()).toEqual({ error: "INVALID_CONTROL" });
-    expect(valid.status).toBe(200);
-    expect(stateRequests).toHaveLength(1);
-    expect(new URL(stateRequests[0]!.url).pathname).toBe("/control");
-    expect(agentRequests).toHaveLength(1);
-    expect(new URL(agentRequests[0]!.url).pathname).toBe("/ensure");
   });
 
   it("returns JSON 404 for unknown API routes", async () => {

@@ -1,6 +1,6 @@
 import { authorized, isControlAction } from "./control";
 import { DIAGNOSTIC_STATE_INSTANCE, PRIMARY_STATE_INSTANCE } from "./instances";
-import { CONFIG_SCHEMA } from "./strategy/config";
+import { CONFIG_SCHEMA } from "./python-strategy/config";
 
 const MAX_REQUEST_BYTES = 64 * 1024;
 
@@ -60,10 +60,30 @@ export async function handleRequest(
     }
     return diagnostics(env).fetch("https://state.internal/logs");
   }
-  if (
-    (url.pathname === "/api/control" || url.pathname === "/control") &&
-    request.method === "POST"
-  ) {
+  if (url.pathname === "/api/control" && request.method === "GET") {
+    return state(env).fetch("https://state.internal/manual-control");
+  }
+  if (url.pathname === "/api/control" && request.method === "POST") {
+    if (!authorizedRequest(request, env.ADMIN_CONTROL_SECRET)) {
+      return new Response(null, { status: 404 });
+    }
+    const body = await readRequestBody(request);
+    if (body instanceof Response) return body;
+    return state(env).fetch("https://state.internal/manual-control", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body,
+    });
+  }
+  if (url.pathname === "/api/control" && request.method === "DELETE") {
+    if (!authorizedRequest(request, env.ADMIN_CONTROL_SECRET)) {
+      return new Response(null, { status: 404 });
+    }
+    return state(env).fetch("https://state.internal/manual-control", {
+      method: "DELETE",
+    });
+  }
+  if (url.pathname === "/control" && request.method === "POST") {
     if (!authorizedRequest(request, env.ADMIN_CONTROL_SECRET)) {
       return new Response(null, { status: 404 });
     }

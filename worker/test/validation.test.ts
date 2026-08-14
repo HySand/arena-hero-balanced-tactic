@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { validatePlan } from "../src/strategy/validation";
+import { validatePlan } from "../src/plan-validation";
 import { core, IDS, state, unit } from "./fixtures";
 
 describe("local command validation", () => {
@@ -45,5 +45,27 @@ describe("local command validation", () => {
         current,
       ),
     ).toBe(false);
+  });
+
+  it("accepts Python-only action variants from the official contract", () => {
+    const current = state([
+      core(),
+      unit(IDS.worker1, "WORKER", [1, 0]),
+      unit(IDS.ranger, "RANGER", [0, 1]),
+    ]);
+
+    expect(
+      validatePlan(
+        {
+          tick: 5,
+          unit_actions: {
+            [IDS.worker1]: { type: "HEAL" },
+            [IDS.ranger]: { type: "SHOOT", expected_cell: [0, 3] },
+          },
+          core_action: { type: "HEAL" },
+        },
+        current,
+      ),
+    ).toBe(true);
   });
 });
