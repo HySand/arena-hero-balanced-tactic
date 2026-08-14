@@ -8,7 +8,7 @@ import type {
   StrategyRuntimeStatus,
   StrategyStatusSummary,
 } from "./contracts";
-import { PRIMARY_STATE_INSTANCE } from "./instances";
+import { PRIMARY_STATE_INSTANCE, PYTHON_STRATEGY_INSTANCE } from "./instances";
 import { decodeJsonGzip, encodeJsonGzip } from "./json-storage";
 import { applyManualControls, type ControlReceipt } from "./manual-control";
 import { decodeGameMessage, serializePlan } from "./protocol";
@@ -581,7 +581,7 @@ export class ArenaHeroAgent extends DurableObject<Env> {
   }
 
   private pythonStrategy(): DurableObjectStub {
-    return this.env.PYTHON_STRATEGY.getByName(PRIMARY_STATE_INSTANCE);
+    return this.env.PYTHON_STRATEGY.getByName(PYTHON_STRATEGY_INSTANCE);
   }
 }
 
