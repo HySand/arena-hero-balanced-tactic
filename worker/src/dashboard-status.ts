@@ -42,7 +42,12 @@ export function projectDashboardStatus(
   const core = controlledCore(input.state.objects);
   const units = controlledUnits(input.state.objects);
   const counts = unitCounts(units);
-  const phase = dashboardPhase(input.tick, input.memory, input.config);
+  const phase = dashboardPhase(
+    input.tick,
+    units.length,
+    input.memory,
+    input.config,
+  );
   const resourceSpace = Math.max(
     0,
     Math.max(10, input.state.population * 5) - input.state.resources,
@@ -256,17 +261,25 @@ function unitCounts(units: readonly UnitObject[]): Record<string, number> {
 
 function dashboardPhase(
   tick: number,
+  population: number,
   memory: PythonStrategyMemory,
   config: PythonStrategyConfig,
 ): "EARLY" | "MID" | "LATE" {
-  const turnsSeen = numberAt(memory, "turns_seen");
-  const firstTick = numberAt(memory, "first_tick");
-  const elapsed = Math.max(
-    0,
-    turnsSeen === undefined ? tick - (firstTick ?? tick) : turnsSeen,
-  );
-  if (elapsed < config.pacing.early_ticks) return "EARLY";
-  if (elapsed < config.pacing.mid_ticks) return "MID";
+  if (!config.pacing.enabled) return "LATE";
+  const firstTick = numberAt(memory, "first_tick") ?? tick;
+  const elapsed = Math.max(0, tick - firstTick);
+  if (
+    elapsed < config.pacing.early_ticks &&
+    population < config.pacing.early_population
+  ) {
+    return "EARLY";
+  }
+  if (
+    elapsed < config.pacing.mid_ticks ||
+    population < config.pacing.mid_population
+  ) {
+    return "MID";
+  }
   return "LATE";
 }
 
